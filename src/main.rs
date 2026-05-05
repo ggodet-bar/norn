@@ -35,6 +35,7 @@ fn main() -> anyhow::Result<()> {
     let (tx, rx) = mpsc::channel::<LogLine>();
     // A file path overrides stdin; in that mode the buffer is unbounded
     // because the file is finite and the user expects to scroll all of it.
+    let file_mode = args.path.is_some();
     let max_lines = match &args.path {
         Some(path) => {
             pipe_into(File::open(path)?, tx);
@@ -57,7 +58,7 @@ fn main() -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(max_lines);
-    let res = run(&mut terminal, &mut app, &rx);
+    let res = run(&mut terminal, &mut app, &rx, file_mode);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -138,17 +139,20 @@ fn run<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     rx: &mpsc::Receiver<LogLine>,
+    file_mode: bool,
 ) -> anyhow::Result<()> {
     let tick = Duration::from_millis(50);
     // Producers that emit cursor-control sequences in tight bursts can leave
     // the terminal with stale cells ratatui's diff renderer won't repaint.
     // The bursts overwhelmingly come from warmup/compile output, so a single
     // forced clear ~2s after the first input is enough — after that, the
-    // diff renderer keeps up on its own.
+    // diff renderer keeps up on its own. File input doesn't have this
+    // problem (no live producer, no cursor-control bursts), so the clear
+    // is suppressed there to avoid a visible flicker.
     let warmup_redraw_delay = Duration::from_secs(2);
     let mut last_draw = Instant::now() - tick;
     let mut first_input_at: Option<Instant> = None;
-    let mut warmup_redraw_done = false;
+    let mut warmup_redraw_done = file_mode;
     let mut input_mode = InputMode::Normal;
 
     loop {
