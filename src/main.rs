@@ -92,6 +92,10 @@ fn parse_args() -> anyhow::Result<Args> {
                 print_help();
                 std::process::exit(0);
             }
+            "-V" | "--version" => {
+                println!("norn {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
             _ if idx == 1 => {
                 let path_arg = PathBuf::from_str(&arg)
                     .map_err(|e| anyhow!("{arg}: invalid file path: {e}"))?;
@@ -112,6 +116,7 @@ fn print_help() {
          Options:\n  \
            -n, --max-lines N   retain at most N display rows; 0 = unlimited \
            (default: {DEFAULT_MAX_LINES})\n  \
+           -V, --version       print version and exit\n  \
            -h, --help          show this help"
     );
 }
