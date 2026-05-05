@@ -122,7 +122,15 @@ fn run<B: ratatui::backend::Backend>(
     rx: &mpsc::Receiver<LogLine>,
 ) -> anyhow::Result<()> {
     let tick = Duration::from_millis(50);
+    // Producers that emit cursor-control sequences in tight bursts can leave
+    // the terminal with stale cells ratatui's diff renderer won't repaint.
+    // The bursts overwhelmingly come from warmup/compile output, so a single
+    // forced clear ~2s after the first input is enough — after that, the
+    // diff renderer keeps up on its own.
+    let warmup_redraw_delay = Duration::from_secs(2);
     let mut last_draw = Instant::now() - tick;
+    let mut first_input_at: Option<Instant> = None;
+    let mut warmup_redraw_done = false;
 
     loop {
         let mut got_data = false;
@@ -130,8 +138,19 @@ fn run<B: ratatui::backend::Backend>(
             app.push(line);
             got_data = true;
         }
+        if got_data && first_input_at.is_none() {
+            first_input_at = Some(Instant::now());
+        }
 
         if got_data || last_draw.elapsed() >= tick {
+            if !warmup_redraw_done
+                && first_input_at.is_some_and(|t| t.elapsed() >= warmup_redraw_delay)
+            {
+                terminal
+                    .clear()
+                    .map_err(|e| anyhow!("failed to clear terminal: {e}"))?;
+                warmup_redraw_done = true;
+            }
             terminal
                 .draw(|f| ui::draw(f, app))
                 .map_err(|e| anyhow!("failed to draw terminal: {e}"))?;
