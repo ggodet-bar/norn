@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use ansi_to_tui::IntoText;
 use ratatui::text::Line;
@@ -9,9 +9,11 @@ use crate::categorize;
 /// A candidate must appear in this many distinct input lines before it gets a
 /// real pane — keeps line-unique noise out of the tab strip.
 const PROMOTION_THRESHOLD: usize = 12;
-/// Fast-track: a candidate seen in this many input lines back-to-back is a
-/// strong signal of a real category, so promote without waiting for hits.
-const CONSECUTIVE_THRESHOLD: usize = 3;
+/// Fast-track: a candidate seen in `BURST_HITS` of the last `BURST_WINDOW`
+/// input lines is a strong signal of a real category, so promote without
+/// waiting for the full hit count.
+const BURST_HITS: usize = 3;
+const BURST_WINDOW: usize = 6;
 /// A pending candidate that hasn't been seen for this many input lines is
 /// dropped so memory doesn't grow with one-off tags.
 const PENDING_EVICTION_AGE: usize = 200;
@@ -55,8 +57,10 @@ struct PendingCategory {
     rows: Vec<usize>,
     /// `App::input_seq` of the most recent mention, used for eviction.
     last_seen_seq: usize,
-    /// Length of the current run of back-to-back mentions; resets on any gap.
-    consecutive: usize,
+    /// `input_seq` of the most recent up-to-`BURST_HITS` mentions, oldest
+    /// first. Used to detect bursts (`BURST_HITS` hits within `BURST_WINDOW`
+    /// input lines) for the fast-track promotion path.
+    recent_seqs: VecDeque<usize>,
 }
 
 pub struct App {
@@ -109,19 +113,24 @@ impl App {
             }
 
             let promote = {
-                let entry = self.pending.entry(cat_name.clone()).or_insert(PendingCategory {
-                    hits: 0,
-                    rows: Vec::new(),
-                    last_seen_seq: seq,
-                    consecutive: 0,
+                let entry = self.pending.entry(cat_name.clone()).or_insert_with(|| {
+                    PendingCategory {
+                        hits: 0,
+                        rows: Vec::new(),
+                        last_seen_seq: seq,
+                        recent_seqs: VecDeque::with_capacity(BURST_HITS),
+                    }
                 });
-                let continues = entry.hits > 0 && seq == entry.last_seen_seq + 1;
-                entry.consecutive = if continues { entry.consecutive + 1 } else { 1 };
+                if entry.recent_seqs.len() == BURST_HITS {
+                    entry.recent_seqs.pop_front();
+                }
+                entry.recent_seqs.push_back(seq);
                 entry.hits += 1;
                 entry.rows.extend(start..end);
                 entry.last_seen_seq = seq;
-                entry.hits >= PROMOTION_THRESHOLD
-                    || entry.consecutive >= CONSECUTIVE_THRESHOLD
+                let burst = entry.recent_seqs.len() == BURST_HITS
+                    && seq - entry.recent_seqs.front().copied().unwrap() < BURST_WINDOW;
+                entry.hits >= PROMOTION_THRESHOLD || burst
             };
 
             if promote {
