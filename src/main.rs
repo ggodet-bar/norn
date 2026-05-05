@@ -27,6 +27,7 @@ struct Args {
     /// `None` when the user passes `0` to waive the limit
     max_lines: Option<usize>,
     path: Option<PathBuf>,
+    no_line_numbers: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -58,6 +59,7 @@ fn main() -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(max_lines);
+    app.show_line_numbers = file_mode && !args.no_line_numbers;
     let res = run(&mut terminal, &mut app, &rx, file_mode);
 
     disable_raw_mode()?;
@@ -73,6 +75,7 @@ fn parse_args() -> anyhow::Result<Args> {
     let mut args = std::env::args().enumerate().skip(1);
     let mut max_lines: Option<usize> = Some(DEFAULT_MAX_LINES);
     let mut path: Option<PathBuf> = None;
+    let mut no_line_numbers = false;
     while let Some((idx, arg)) = args.next() {
         match arg.as_str() {
             "-n" | "--max-lines" => {
@@ -88,6 +91,9 @@ fn parse_args() -> anyhow::Result<Args> {
                     .parse()
                     .map_err(|e| anyhow!("{arg}: invalid integer {value:?}: {e}"))?;
                 max_lines = if n == 0 { None } else { Some(n) };
+            }
+            "-N" | "--no-line-numbers" => {
+                no_line_numbers = true;
             }
             "-h" | "--help" => {
                 print_help();
@@ -105,7 +111,7 @@ fn parse_args() -> anyhow::Result<Args> {
             other => anyhow::bail!("unknown argument: {other}"),
         }
     }
-    Ok(Args { max_lines, path })
+    Ok(Args { max_lines, path, no_line_numbers })
 }
 
 fn print_help() {
@@ -117,6 +123,7 @@ fn print_help() {
          Options:\n  \
            -n, --max-lines N   retain at most N display rows; 0 = unlimited \
            (default: {DEFAULT_MAX_LINES})\n  \
+           -N, --no-line-numbers   hide the line-number gutter (file mode only)\n  \
            -V, --version       print version and exit\n  \
            -h, --help          show this help"
     );

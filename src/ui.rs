@@ -66,17 +66,25 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
 
     // We clone Lines here only for the rendered frame; storage stays
     // index-based per pane, so categories never duplicate the buffer.
-    let (mut lines, total): (Vec<Line<'static>>, usize) = if app.selected == 0 {
-        (app.rendered.clone(), app.rendered.len())
-    } else {
-        let cat = &app.categories[app.selected - 1];
-        (
-            cat.indices.iter().map(|&i| app.rendered[i].clone()).collect(),
-            cat.indices.len(),
-        )
-    };
+    // `render_rows` keeps the absolute index into `app.rendered` for each
+    // pane row so the line-number gutter can fetch input numbers below.
+    let (mut lines, render_rows, total): (Vec<Line<'static>>, Vec<usize>, usize) =
+        if app.selected == 0 {
+            let n = app.rendered.len();
+            (app.rendered.clone(), (0..n).collect(), n)
+        } else {
+            let cat = &app.categories[app.selected - 1];
+            (
+                cat.indices.iter().map(|&i| app.rendered[i].clone()).collect(),
+                cat.indices.clone(),
+                cat.indices.len(),
+            )
+        };
 
     apply_search_highlights(&mut lines, app);
+    if app.show_line_numbers {
+        prepend_line_number_gutter(&mut lines, &render_rows, &app.line_numbers);
+    }
 
     let max_scroll = total.saturating_sub(viewport);
     let (view, _) = app.active_view_mut();
@@ -89,6 +97,40 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
 
     let p = Paragraph::new(lines).block(block).scroll((scroll, 0));
     f.render_widget(p, area);
+}
+
+/// Prepend a right-aligned line-number gutter to each pane line. Width is
+/// sized to the largest visible number so columns stay aligned. Repeated
+/// numbers (multiple rendered rows from one input line) only print on the
+/// first occurrence; later rows show a blank gutter.
+fn prepend_line_number_gutter(
+    lines: &mut [Line<'static>],
+    render_rows: &[usize],
+    numbers: &[usize],
+) {
+    if lines.is_empty() {
+        return;
+    }
+    let max = render_rows
+        .iter()
+        .filter_map(|&r| numbers.get(r).copied())
+        .max()
+        .unwrap_or(0);
+    let width = max.to_string().len().max(1);
+    let style = Style::default().fg(Color::DarkGray);
+    let mut prev: Option<usize> = None;
+    for (line, &r) in lines.iter_mut().zip(render_rows.iter()) {
+        let n = numbers.get(r).copied();
+        let label = match n {
+            Some(num) if Some(num) != prev => format!("{:>width$} │ ", num, width = width),
+            _ => format!("{:>width$} │ ", "", width = width),
+        };
+        prev = n;
+        let mut spans = Vec::with_capacity(line.spans.len() + 1);
+        spans.push(Span::styled(label, style));
+        spans.extend(line.spans.drain(..));
+        *line = Line::from(spans);
+    }
 }
 
 /// Splice highlight styling into pane lines for every match in the active

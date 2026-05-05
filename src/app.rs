@@ -93,6 +93,9 @@ struct PendingCategory {
 
 pub struct App {
     pub rendered: Vec<Line<'static>>,
+    /// Parallel to `rendered`: each entry is the input line number of the
+    /// row. Numbers come from `input_seq` and so survive trimming.
+    pub line_numbers: Vec<usize>,
     pub main: ViewState,
     pub main_search: SearchState,
     pub max_lines: Option<usize>,
@@ -103,12 +106,15 @@ pub struct App {
     input_seq: usize,
     /// 0 = main "all" view, 1..=N = categories[N-1].
     pub selected: usize,
+    /// Render an input-line-number gutter in the log pane.
+    pub show_line_numbers: bool,
 }
 
 impl App {
     pub fn new(max_lines: Option<usize>) -> Self {
         Self {
             rendered: Vec::new(),
+            line_numbers: Vec::new(),
             main: ViewState::new(),
             main_search: SearchState::default(),
             max_lines,
@@ -117,6 +123,7 @@ impl App {
             pending: HashMap::new(),
             input_seq: 0,
             selected: 0,
+            show_line_numbers: false,
         }
     }
 
@@ -135,6 +142,7 @@ impl App {
 
         self.input_seq += 1;
         let seq = self.input_seq;
+        self.line_numbers.resize(end, seq);
 
         for cat_name in cats {
             if let Some(&idx) = self.category_index.get(&cat_name) {
@@ -189,6 +197,7 @@ impl App {
             if len > limit {
                 let drop = len - limit;
                 self.rendered.drain(..drop);
+                self.line_numbers.drain(..drop);
                 self.main.scroll = self.main.scroll.saturating_sub(drop);
                 // Pane rows for "all" are 1:1 with rendered rows.
                 adjust_search_after_drop(&mut self.main_search, drop);
