@@ -3,7 +3,7 @@ mod capture;
 mod categorize;
 mod ui;
 
-use std::io;
+use std::io::{self, IsTerminal};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -22,11 +22,12 @@ const DEFAULT_MAX_LINES: usize = 10_000;
 fn main() -> anyhow::Result<()> {
     let max_lines = parse_args()?;
 
-    let (tx, rx) = mpsc::channel::<LogLine>();
+    if io::stdin().is_terminal() {
+        eprintln!("Missing filename. Run `norn --help` for usage.");
+        std::process::exit(2);
+    }
 
-    // Stdin is the upstream log pipe. crossterm opens /dev/tty itself for key
-    // input when stdin isn't a tty, so we can hand stdin to the reader thread
-    // unmodified.
+    let (tx, rx) = mpsc::channel::<LogLine>();
     pipe_into(io::stdin(), tx);
 
     let mut stdout = io::stdout();
