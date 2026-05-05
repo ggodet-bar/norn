@@ -1,5 +1,6 @@
 mod app;
 mod capture;
+mod categorize;
 mod ui;
 
 use std::io;
@@ -115,6 +116,12 @@ fn run<B: ratatui::backend::Backend>(
                 match (key.code, key.modifiers) {
                     (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => return Ok(()),
                     (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(()),
+                    (KeyCode::Tab, _) => app.next_tab(),
+                    (KeyCode::BackTab, _) => app.prev_tab(),
+                    (KeyCode::Char(c), _) if c.is_ascii_digit() => {
+                        let d = c.to_digit(10).unwrap() as usize;
+                        app.select_tab(d);
+                    }
                     (KeyCode::Up, _) => app.scroll_up(1),
                     (KeyCode::Down, _) => app.scroll_down(1, viewport),
                     (KeyCode::PageUp, _) => app.scroll_up(viewport.max(1)),
