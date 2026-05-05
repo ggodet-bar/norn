@@ -132,7 +132,9 @@ fn run<B: ratatui::backend::Backend>(
         }
 
         if got_data || last_draw.elapsed() >= tick {
-            terminal.draw(|f| ui::draw(f, app))?;
+            terminal
+                .draw(|f| ui::draw(f, app))
+                .map_err(|e| anyhow!("failed to draw terminal: {e}"))?;
             last_draw = Instant::now();
         }
 
