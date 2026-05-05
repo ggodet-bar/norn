@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -121,6 +121,19 @@ fn print_help() {
     );
 }
 
+/// Editing state for the search bar. `Normal` is the default mode where
+/// scroll/tab/quit keys apply. `Search` opens on `/`; while it's active all
+/// non-control character keys go into the buffer instead of triggering
+/// app-wide actions.
+pub enum InputMode {
+    Normal,
+    Search {
+        buffer: String,
+        is_regex: bool,
+        error: Option<String>,
+    },
+}
+
 fn run<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -136,6 +149,7 @@ fn run<B: ratatui::backend::Backend>(
     let mut last_draw = Instant::now() - tick;
     let mut first_input_at: Option<Instant> = None;
     let mut warmup_redraw_done = false;
+    let mut input_mode = InputMode::Normal;
 
     loop {
         let mut got_data = false;
@@ -171,24 +185,159 @@ fn run<B: ratatui::backend::Backend>(
                     .size()
                     .map(|s| s.height.saturating_sub(3) as usize)
                     .unwrap_or(0);
-                match (key.code, key.modifiers) {
-                    (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => return Ok(()),
-                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(()),
-                    (KeyCode::Tab, _) => app.next_tab(),
-                    (KeyCode::BackTab, _) => app.prev_tab(),
-                    (KeyCode::Char(c), _) if c.is_ascii_digit() => {
-                        let d = c.to_digit(10).unwrap() as usize;
-                        app.select_tab(d);
-                    }
-                    (KeyCode::Up, _) => app.scroll_up(1),
-                    (KeyCode::Down, _) => app.scroll_down(1, viewport),
-                    (KeyCode::PageUp, _) => app.scroll_up(viewport.max(1)),
-                    (KeyCode::PageDown, _) => app.scroll_down(viewport.max(1), viewport),
-                    (KeyCode::Home, _) => app.scroll_top(),
-                    (KeyCode::End, _) => app.scroll_bottom(),
-                    _ => {}
+                // Scroll keys always pass through, even mid-search edit, so
+                // the user can keep their bearings while composing a query.
+                if handle_scroll_key(&key, app, viewport) {
+                    continue;
+                }
+                let prev = std::mem::replace(&mut input_mode, InputMode::Normal);
+                match handle_key(prev, key, app, viewport) {
+                    Some(next) => input_mode = next,
+                    None => return Ok(()),
                 }
             }
         }
     }
+}
+
+/// Scroll-family keys behave the same way in every input mode so the user
+/// can keep their bearings while composing a search query. Returns `true`
+/// when a key was consumed.
+fn handle_scroll_key(key: &KeyEvent, app: &mut App, viewport: usize) -> bool {
+    match key.code {
+        KeyCode::Up => app.scroll_up(1),
+        KeyCode::Down => app.scroll_down(1, viewport),
+        KeyCode::PageUp => app.scroll_up(viewport.max(1)),
+        KeyCode::PageDown => app.scroll_down(viewport.max(1), viewport),
+        KeyCode::Home => app.scroll_top(),
+        KeyCode::End => app.scroll_bottom(),
+        _ => return false,
+    }
+    true
+}
+
+/// Dispatch a key to the appropriate per-mode handler. Returns `None` to
+/// quit the run loop or `Some(next)` for the next mode.
+fn handle_key(
+    mode: InputMode,
+    key: KeyEvent,
+    app: &mut App,
+    viewport: usize,
+) -> Option<InputMode> {
+    match mode {
+        InputMode::Search { buffer, is_regex, error } => {
+            handle_search_key(buffer, is_regex, error, key, app, viewport)
+        }
+        InputMode::Normal => handle_normal_key(key, app, viewport),
+    }
+}
+
+fn handle_search_key(
+    mut buffer: String,
+    mut is_regex: bool,
+    error: Option<String>,
+    key: KeyEvent,
+    app: &mut App,
+    viewport: usize,
+) -> Option<InputMode> {
+    let stay = |buffer, is_regex, error| {
+        Some(InputMode::Search { buffer, is_regex, error })
+    };
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            Some(InputMode::Normal)
+        }
+        (KeyCode::Enter, _) => match app.commit_search(&buffer, is_regex) {
+            Ok(_) => {
+                if let Some(row) = current_match_row(app) {
+                    scroll_to_row(app, row, viewport);
+                }
+                Some(InputMode::Normal)
+            }
+            Err(e) => stay(buffer, is_regex, Some(e.to_string())),
+        },
+        (KeyCode::Backspace, _) => {
+            buffer.pop();
+            stay(buffer, is_regex, None)
+        }
+        (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
+            is_regex = !is_regex;
+            stay(buffer, is_regex, None)
+        }
+        // Bare characters (and shifted ones; SHIFT comes through as a
+        // modifier alongside the uppercased Char) extend the buffer. Any
+        // other modifier combination is reserved for future bindings.
+        (KeyCode::Char(c), m) if (m - KeyModifiers::SHIFT).is_empty() => {
+            buffer.push(c);
+            stay(buffer, is_regex, None)
+        }
+        _ => stay(buffer, is_regex, error),
+    }
+}
+
+fn handle_normal_key(
+    key: KeyEvent,
+    app: &mut App,
+    viewport: usize,
+) -> Option<InputMode> {
+    match (key.code, key.modifiers) {
+        (KeyCode::Char('q'), _) => None,
+        (KeyCode::Char('c'), KeyModifiers::CONTROL) => None,
+        // Esc clears an active search before falling back to quit, so
+        // pressing it once "exits" search mode the way users expect.
+        (KeyCode::Esc, _) => {
+            if app.active_search().query.is_some() {
+                app.clear_search();
+                Some(InputMode::Normal)
+            } else {
+                None
+            }
+        }
+        (KeyCode::Char('/'), _) => Some(InputMode::Search {
+            buffer: String::new(),
+            is_regex: false,
+            error: None,
+        }),
+        (KeyCode::Char('n'), m) if !m.contains(KeyModifiers::CONTROL) => {
+            if let Some(row) = app.search_next() {
+                scroll_to_row(app, row, viewport);
+            }
+            Some(InputMode::Normal)
+        }
+        (KeyCode::Char('N'), _) => {
+            if let Some(row) = app.search_prev() {
+                scroll_to_row(app, row, viewport);
+            }
+            Some(InputMode::Normal)
+        }
+        (KeyCode::Tab, _) => {
+            app.next_tab();
+            Some(InputMode::Normal)
+        }
+        (KeyCode::BackTab, _) => {
+            app.prev_tab();
+            Some(InputMode::Normal)
+        }
+        (KeyCode::Char(c), _) if c.is_ascii_digit() => {
+            let d = c.to_digit(10).unwrap() as usize;
+            app.select_tab(d);
+            Some(InputMode::Normal)
+        }
+        _ => Some(InputMode::Normal),
+    }
+}
+
+fn current_match_row(app: &App) -> Option<usize> {
+    let s = app.active_search();
+    s.current
+        .and_then(|c| s.matches.get(c))
+        .map(|m| m.row)
+}
+
+fn scroll_to_row(app: &mut App, row: usize, viewport: usize) {
+    let (view, total) = app.active_view_mut();
+    let half = viewport / 2;
+    let max_scroll = total.saturating_sub(viewport);
+    view.scroll = row.saturating_sub(half).min(max_scroll);
+    view.follow = false;
 }
