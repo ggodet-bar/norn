@@ -16,7 +16,11 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use crate::app::App;
 use crate::capture::{LogLine, pipe_into};
 
+const DEFAULT_MAX_LINES: usize = 10_000;
+
 fn main() -> anyhow::Result<()> {
+    let max_lines = parse_args()?;
+
     let (tx, rx) = mpsc::channel::<LogLine>();
 
     // Stdin is the upstream log pipe. crossterm opens /dev/tty itself for key
@@ -30,7 +34,7 @@ fn main() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
+    let mut app = App::new(max_lines);
     let res = run(&mut terminal, &mut app, &rx);
 
     disable_raw_mode()?;
@@ -38,6 +42,45 @@ fn main() -> anyhow::Result<()> {
     terminal.show_cursor()?;
 
     res
+}
+
+/// Parse CLI args. Returns the configured max-lines cap: `Some(n)` for a
+/// bounded buffer, `None` when the user passes `0` to waive the limit.
+fn parse_args() -> anyhow::Result<Option<usize>> {
+    let mut args = std::env::args().skip(1);
+    let mut max_lines: Option<usize> = Some(DEFAULT_MAX_LINES);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-n" | "--max-lines" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("{arg} requires a value"))?;
+                let n: usize = value
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("{arg}: invalid integer {value:?}: {e}"))?;
+                max_lines = if n == 0 { None } else { Some(n) };
+            }
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
+            other => anyhow::bail!("unknown argument: {other}"),
+        }
+    }
+    Ok(max_lines)
+}
+
+fn print_help() {
+    println!(
+        "norn — TUI log viewer that reads from stdin\n\
+         \n\
+         Usage: norn [OPTIONS]\n\
+         \n\
+         Options:\n  \
+           -n, --max-lines N   retain at most N display rows; 0 = unlimited \
+           (default: {DEFAULT_MAX_LINES})\n  \
+           -h, --help          show this help"
+    );
 }
 
 fn run<B: ratatui::backend::Backend>(

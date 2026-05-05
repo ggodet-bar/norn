@@ -10,14 +10,17 @@ pub struct App {
     pub scroll: usize,
     /// View pinned to the tail.
     pub follow: bool,
+    /// Cap on retained rendered rows; `None` means unbounded.
+    pub max_lines: Option<usize>,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(max_lines: Option<usize>) -> Self {
         Self {
             rendered: Vec::new(),
             scroll: 0,
             follow: true,
+            max_lines,
         }
     }
 
@@ -29,6 +32,17 @@ impl App {
             .map(|t| t.lines)
             .unwrap_or_else(|_| vec![Line::raw(line.raw)]);
         self.rendered.extend(parsed);
+
+        if let Some(limit) = self.max_lines {
+            let len = self.rendered.len();
+            if len > limit {
+                let drop = len - limit;
+                self.rendered.drain(..drop);
+                // Keep the paused viewport anchored on the same content; if it
+                // was within the dropped window, clamp to the new top.
+                self.scroll = self.scroll.saturating_sub(drop);
+            }
+        }
     }
 
     pub fn scroll_up(&mut self, n: usize) {
