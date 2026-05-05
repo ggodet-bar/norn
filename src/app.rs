@@ -9,6 +9,9 @@ use crate::categorize;
 /// A candidate must appear in this many distinct input lines before it gets a
 /// real pane — keeps line-unique noise out of the tab strip.
 const PROMOTION_THRESHOLD: usize = 12;
+/// Fast-track: a candidate seen in this many input lines back-to-back is a
+/// strong signal of a real category, so promote without waiting for hits.
+const CONSECUTIVE_THRESHOLD: usize = 3;
 /// A pending candidate that hasn't been seen for this many input lines is
 /// dropped so memory doesn't grow with one-off tags.
 const PENDING_EVICTION_AGE: usize = 200;
@@ -52,6 +55,8 @@ struct PendingCategory {
     rows: Vec<usize>,
     /// `App::input_seq` of the most recent mention, used for eviction.
     last_seen_seq: usize,
+    /// Length of the current run of back-to-back mentions; resets on any gap.
+    consecutive: usize,
 }
 
 pub struct App {
@@ -108,11 +113,15 @@ impl App {
                     hits: 0,
                     rows: Vec::new(),
                     last_seen_seq: seq,
+                    consecutive: 0,
                 });
+                let continues = entry.hits > 0 && seq == entry.last_seen_seq + 1;
+                entry.consecutive = if continues { entry.consecutive + 1 } else { 1 };
                 entry.hits += 1;
                 entry.rows.extend(start..end);
                 entry.last_seen_seq = seq;
                 entry.hits >= PROMOTION_THRESHOLD
+                    || entry.consecutive >= CONSECUTIVE_THRESHOLD
             };
 
             if promote {
