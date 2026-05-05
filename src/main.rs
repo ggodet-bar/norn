@@ -321,6 +321,10 @@ fn handle_normal_key(
             }
             Some(InputMode::Normal)
         }
+        (KeyCode::Char('x'), KeyModifiers::CONTROL) => {
+            app.ignore_active_category();
+            Some(InputMode::Normal)
+        }
         (KeyCode::Tab, _) => {
             app.next_tab();
             Some(InputMode::Normal)

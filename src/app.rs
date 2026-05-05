@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use ansi_to_tui::IntoText;
 use ratatui::text::Line;
@@ -102,6 +102,9 @@ pub struct App {
     pub categories: Vec<Category>,
     category_index: HashMap<String, usize>,
     pending: HashMap<String, PendingCategory>,
+    /// Category names the user has explicitly hidden. `push` skips these
+    /// before they can land in `pending` or get promoted again.
+    ignored: HashSet<String>,
     /// Monotonic input-line counter; not affected by trimming.
     input_seq: usize,
     /// 0 = main "all" view, 1..=N = categories[N-1].
@@ -121,6 +124,7 @@ impl App {
             categories: Vec::new(),
             category_index: HashMap::new(),
             pending: HashMap::new(),
+            ignored: HashSet::new(),
             input_seq: 0,
             selected: 0,
             show_line_numbers: false,
@@ -145,6 +149,9 @@ impl App {
         self.line_numbers.resize(end, seq);
 
         for cat_name in cats {
+            if self.ignored.contains(&cat_name) {
+                continue;
+            }
             if let Some(&idx) = self.category_index.get(&cat_name) {
                 self.categories[idx].indices.extend(start..end);
                 self.scan_new_category_rows(idx, end - start);
@@ -267,6 +274,27 @@ impl App {
         if idx <= self.categories.len() {
             self.selected = idx;
         }
+    }
+
+    /// Drop the currently-selected category and remember its name so future
+    /// pushes don't promote it again. No-op when the "all" pane is active.
+    /// Selection moves one tab to the left so the user lands on the pane
+    /// that sat next to the one they hid.
+    pub fn ignore_active_category(&mut self) {
+        if self.selected == 0 {
+            return;
+        }
+        let idx = self.selected - 1;
+        let name = self.categories.remove(idx).name;
+        self.category_index.remove(&name);
+        for v in self.category_index.values_mut() {
+            if *v > idx {
+                *v -= 1;
+            }
+        }
+        self.pending.remove(&name);
+        self.ignored.insert(name);
+        self.selected -= 1;
     }
 
     /// Compile `raw` and replace the active pane's search state. On success
@@ -543,6 +571,50 @@ mod tests {
         // to 0 (the new first match).
         assert_eq!(app.main_search.current, Some(0));
         assert_eq!(app.main_search.matches.len(), 2);
+    }
+
+    #[test]
+    fn ignore_active_category_drops_pane_and_blocks_reappearance() {
+        let mut app = App::new(None);
+        // Burst-promote "[db]" so we have a category pane to ignore.
+        push_lines(&mut app, &["[db] a", "[db] b", "[db] c"]);
+        assert_eq!(app.categories.len(), 1);
+        let name = app.categories[0].name.clone();
+        app.selected = 1;
+        app.ignore_active_category();
+        assert!(app.categories.is_empty());
+        // Selection slides one tab left — from the only category back to "all".
+        assert_eq!(app.selected, 0);
+        // Subsequent matching lines must not re-promote the category.
+        for _ in 0..20 {
+            push_lines(&mut app, &[&format!("[{name}] again")]);
+        }
+        assert!(app.categories.is_empty());
+    }
+
+    #[test]
+    fn ignore_active_category_lands_on_left_neighbor() {
+        let mut app = App::new(None);
+        // Two distinct burst-promoted categories.
+        push_lines(
+            &mut app,
+            &["[db] 1", "[db] 2", "[db] 3", "[auth] 1", "[auth] 2", "[auth] 3"],
+        );
+        assert_eq!(app.categories.len(), 2);
+        // Select the second category and ignore it; selection should fall
+        // back to the first category (tab index 1), not "all".
+        app.selected = 2;
+        app.ignore_active_category();
+        assert_eq!(app.categories.len(), 1);
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn ignore_on_all_pane_is_noop() {
+        let mut app = App::new(None);
+        push_lines(&mut app, &["foo"]);
+        app.ignore_active_category();
+        assert_eq!(app.selected, 0);
     }
 
     #[test]
