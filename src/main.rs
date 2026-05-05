@@ -3,32 +3,52 @@ mod capture;
 mod categorize;
 mod ui;
 
+use std::fs::File;
 use std::io::{self, IsTerminal};
+use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use anyhow::anyhow;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::App;
-use crate::capture::{LogLine, pipe_into};
+use crate::capture::{pipe_into, LogLine};
 
 const DEFAULT_MAX_LINES: usize = 10_000;
 
-fn main() -> anyhow::Result<()> {
-    let max_lines = parse_args()?;
+struct Args {
+    /// `None` when the user passes `0` to waive the limit
+    max_lines: Option<usize>,
+    path: Option<PathBuf>,
+}
 
-    if io::stdin().is_terminal() {
-        eprintln!("Missing filename. Run `norn --help` for usage.");
-        std::process::exit(2);
-    }
+fn main() -> anyhow::Result<()> {
+    let args = parse_args()?;
 
     let (tx, rx) = mpsc::channel::<LogLine>();
-    pipe_into(io::stdin(), tx);
+    // A file path overrides stdin; in that mode the buffer is unbounded
+    // because the file is finite and the user expects to scroll all of it.
+    let max_lines = match &args.path {
+        Some(path) => {
+            pipe_into(File::open(path)?, tx);
+            None
+        }
+        None => {
+            if io::stdin().is_terminal() {
+                eprintln!("Missing filename. Run `norn --help` for usage.");
+                std::process::exit(2);
+            }
+            pipe_into(io::stdin(), tx);
+            args.max_lines
+        }
+    };
 
     let mut stdout = io::stdout();
     enable_raw_mode()?;
@@ -48,35 +68,46 @@ fn main() -> anyhow::Result<()> {
 
 /// Parse CLI args. Returns the configured max-lines cap: `Some(n)` for a
 /// bounded buffer, `None` when the user passes `0` to waive the limit.
-fn parse_args() -> anyhow::Result<Option<usize>> {
-    let mut args = std::env::args().skip(1);
+fn parse_args() -> anyhow::Result<Args> {
+    let mut args = std::env::args().enumerate().skip(1);
     let mut max_lines: Option<usize> = Some(DEFAULT_MAX_LINES);
-    while let Some(arg) = args.next() {
+    let mut path: Option<PathBuf> = None;
+    while let Some((idx, arg)) = args.next() {
         match arg.as_str() {
             "-n" | "--max-lines" => {
-                let value = args
+                if path.is_some() {
+                    return Err(anyhow!(
+                        "max lines argument not supported when displaying a file"
+                    ));
+                }
+                let (_, value) = args
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("{arg} requires a value"))?;
+                    .ok_or_else(|| anyhow!("{arg} requires a value"))?;
                 let n: usize = value
                     .parse()
-                    .map_err(|e| anyhow::anyhow!("{arg}: invalid integer {value:?}: {e}"))?;
+                    .map_err(|e| anyhow!("{arg}: invalid integer {value:?}: {e}"))?;
                 max_lines = if n == 0 { None } else { Some(n) };
             }
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
             }
+            _ if idx == 1 => {
+                let path_arg = PathBuf::from_str(&arg)
+                    .map_err(|e| anyhow!("{arg}: invalid file path: {e}"))?;
+                path = Some(path_arg);
+            }
             other => anyhow::bail!("unknown argument: {other}"),
         }
     }
-    Ok(max_lines)
+    Ok(Args { max_lines, path })
 }
 
 fn print_help() {
     println!(
-        "norn — TUI log viewer that reads from stdin\n\
+        "norn — TUI log viewer that splits lines into categories\n\
          \n\
-         Usage: norn [OPTIONS]\n\
+         Usage: norn [FILEPATH] [OPTIONS]\n\
          \n\
          Options:\n  \
            -n, --max-lines N   retain at most N display rows; 0 = unlimited \
