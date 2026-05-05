@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use ansi_to_tui::IntoText;
 use ratatui::text::Line;
+use regex::Regex;
 
 use crate::capture::LogLine;
 use crate::categorize;
@@ -47,6 +48,33 @@ pub struct Category {
     /// Strictly increasing row indices into `App::rendered`.
     pub indices: Vec<usize>,
     pub view: ViewState,
+    pub search: SearchState,
+}
+
+/// Compiled query backing a `SearchState`. Literal queries are stored after
+/// `regex::escape` so the matcher path is single-source.
+pub struct CompiledQuery {
+    pub regex: Regex,
+    pub raw: String,
+    pub is_regex: bool,
+}
+
+/// One match within a single rendered row. `start`/`end` are byte offsets
+/// into the row's plain (un-styled) text.
+#[derive(Clone, Copy, Debug)]
+pub struct RowMatch {
+    pub row: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Per-pane search state. Matches stay sorted by `(row, start)` so
+/// next/prev navigation is a simple index walk.
+#[derive(Default)]
+pub struct SearchState {
+    pub query: Option<CompiledQuery>,
+    pub matches: Vec<RowMatch>,
+    pub current: Option<usize>,
 }
 
 struct PendingCategory {
@@ -66,6 +94,7 @@ struct PendingCategory {
 pub struct App {
     pub rendered: Vec<Line<'static>>,
     pub main: ViewState,
+    pub main_search: SearchState,
     pub max_lines: Option<usize>,
     pub categories: Vec<Category>,
     category_index: HashMap<String, usize>,
@@ -81,6 +110,7 @@ impl App {
         Self {
             rendered: Vec::new(),
             main: ViewState::new(),
+            main_search: SearchState::default(),
             max_lines,
             categories: Vec::new(),
             category_index: HashMap::new(),
@@ -141,6 +171,7 @@ impl App {
                     name: cat_name,
                     indices: pending.rows,
                     view: ViewState::new(),
+                    search: SearchState::default(),
                 });
             }
         }
