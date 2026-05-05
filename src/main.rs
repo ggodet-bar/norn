@@ -171,7 +171,7 @@ fn run<B: ratatui::backend::Backend>(
                 warmup_redraw_done = true;
             }
             terminal
-                .draw(|f| ui::draw(f, app))
+                .draw(|f| ui::draw(f, app, &input_mode))
                 .map_err(|e| anyhow!("failed to draw terminal: {e}"))?;
             last_draw = Instant::now();
         }
