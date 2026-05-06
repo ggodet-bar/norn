@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Tabs},
+    widgets::{Block, Borders, Paragraph},
 };
 
 use crate::InputMode;
@@ -37,21 +37,155 @@ pub fn draw(f: &mut Frame, app: &mut App, mode: &InputMode) {
     }
 }
 
+/// Render the tab strip. The "0:all" tab is pinned at the left edge; the
+/// remaining category tabs slide so the active one stays as close to the
+/// center as possible, with `‹` / `›` cues when there are hidden tabs in
+/// either direction.
 fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
-    let titles: Vec<Line> = std::iter::once(Line::from("0:all"))
+    let labels: Vec<String> = std::iter::once("0:all".to_string())
         .chain(app.categories.iter().enumerate().map(|(i, c)| {
-            Line::from(format!("{}:{}", i + 1, truncate(&c.name, 20)))
+            format!("{}:{}", i + 1, truncate(&c.name, 20))
         }))
         .collect();
-    let tabs = Tabs::new(titles)
-        .select(app.selected)
-        .style(Style::default().fg(Color::DarkGray))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-    f.render_widget(tabs, area);
+    // Each tab body is rendered as ` label ` so width is `chars + 2`.
+    let widths: Vec<usize> = labels.iter().map(|l| l.chars().count() + 2).collect();
+
+    let (start, end, show_left, show_right) =
+        compute_tab_window(&widths, app.selected, area.width as usize);
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.extend(tab_spans(&labels[0], app.selected == 0));
+    if show_left {
+        spans.push(divider_span());
+        spans.push(cue_span("‹"));
+    }
+    for i in start..end {
+        spans.push(divider_span());
+        spans.extend(tab_spans(&labels[i], app.selected == i));
+    }
+    if show_right {
+        spans.push(divider_span());
+        spans.push(cue_span("›"));
+    }
+
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Pick which category tabs to show given a width budget and the active
+/// tab's index. `widths[0]` is the "0:all" tab body width; `widths[1..]`
+/// are category bodies. Returns `(start, end, show_left, show_right)`,
+/// where the visible category range is `start..end` (exclusive end). The
+/// "0:all" tab is always rendered, so when only it is visible the range
+/// is `(1, 1)` with no cues.
+fn compute_tab_window(
+    widths: &[usize],
+    selected: usize,
+    avail: usize,
+) -> (usize, usize, bool, bool) {
+    let n = widths.len();
+    if n <= 1 {
+        return (1, 1, false, false);
+    }
+
+    // Body width of a left/right cue (` ‹ ` / ` › `).
+    const CUE_BODY: usize = 3;
+    // Cost of having `[start..=end]` visible alongside "0:all", with cue
+    // bodies added on each side that has hidden tabs. Each visible piece
+    // (cue or tab) is preceded by a 1-char divider.
+    let cost = |start: usize, end: usize| -> usize {
+        let mut c = widths[0];
+        if start > 1 {
+            c += 1 + CUE_BODY;
+        }
+        for w in &widths[start..=end] {
+            c += 1 + w;
+        }
+        if end < n - 1 {
+            c += 1 + CUE_BODY;
+        }
+        c
+    };
+
+    // Fast path: everything fits.
+    if cost(1, n - 1) <= avail {
+        return (1, n, false, false);
+    }
+
+    // Center on the active category. When "0:all" is selected we anchor at
+    // the first category so the window stays left-aligned.
+    let active = selected.max(1).min(n - 1);
+
+    let mut start = active;
+    let mut end = active;
+    if cost(start, end) > avail {
+        // Even the active tab plus cues doesn't fit; show it anyway and let
+        // the terminal clip. This only triggers on absurdly narrow widths.
+        return (active, active + 1, active > 1, active < n - 1);
+    }
+
+    // Grow outward, alternating right then left, keeping `active` centered.
+    let mut prefer_right = true;
+    loop {
+        let can_right = end < n - 1;
+        let can_left = start > 1;
+        if !can_right && !can_left {
+            break;
+        }
+        let try_right = prefer_right && can_right || !can_left;
+        let (ns, ne) = if try_right {
+            (start, end + 1)
+        } else {
+            (start - 1, end)
+        };
+        if cost(ns, ne) <= avail {
+            start = ns;
+            end = ne;
+            prefer_right = !prefer_right;
+            continue;
+        }
+        // Couldn't grow that way; try the other side once before giving up.
+        let other_right = !try_right && can_right;
+        let other_left = try_right && can_left;
+        if other_right {
+            let (ns, ne) = (start, end + 1);
+            if cost(ns, ne) <= avail {
+                start = ns;
+                end = ne;
+                prefer_right = false;
+                continue;
+            }
+        } else if other_left {
+            let (ns, ne) = (start - 1, end);
+            if cost(ns, ne) <= avail {
+                start = ns;
+                end = ne;
+                prefer_right = true;
+                continue;
+            }
+        }
+        break;
+    }
+
+    (start, end + 1, start > 1, end < n - 1)
+}
+
+fn tab_spans(label: &str, selected: bool) -> Vec<Span<'static>> {
+    let style = if selected {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    vec![Span::styled(format!(" {label} "), style)]
+}
+
+fn cue_span(c: &str) -> Span<'static> {
+    Span::styled(format!(" {c} "), Style::default().fg(Color::DarkGray))
+}
+
+fn divider_span() -> Span<'static> {
+    Span::styled("│", Style::default().fg(Color::DarkGray))
 }
 
 fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
@@ -284,5 +418,86 @@ fn truncate(s: &str, max: usize) -> String {
         let mut t: String = s.chars().take(max - 1).collect();
         t.push('…');
         t
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_tab_window;
+
+    /// Build a widths vector where `widths[0]` is the "0:all" body width
+    /// and the remaining entries are uniform-width category tabs.
+    fn uniform(n_cats: usize, cat_width: usize) -> Vec<usize> {
+        let mut v = Vec::with_capacity(n_cats + 1);
+        v.push(7); // " 0:all "
+        v.extend(std::iter::repeat(cat_width).take(n_cats));
+        v
+    }
+
+    #[test]
+    fn shows_everything_when_it_fits() {
+        let w = uniform(3, 8);
+        let (start, end, l, r) = compute_tab_window(&w, 0, 200);
+        assert_eq!((start, end, l, r), (1, 4, false, false));
+    }
+
+    #[test]
+    fn no_categories_renders_only_all() {
+        let w = uniform(0, 8);
+        assert_eq!(compute_tab_window(&w, 0, 80), (1, 1, false, false));
+    }
+
+    #[test]
+    fn centers_active_when_window_slides() {
+        // 20 cats of width 8; total far exceeds budget — expect a window
+        // around the active tab with both cues.
+        let w = uniform(20, 8);
+        let (start, end, l, r) = compute_tab_window(&w, 10, 60);
+        assert!(l && r, "expected both cues for a centered window");
+        assert!(start < 10 && end > 10, "active tab must be inside window");
+        // Roughly centered: distance to either end of the window should be
+        // within one tab of equal.
+        let left_dist = 10 - start;
+        let right_dist = end - 1 - 10;
+        assert!(left_dist.abs_diff(right_dist) <= 1);
+    }
+
+    #[test]
+    fn drops_left_cue_when_active_near_start() {
+        let w = uniform(20, 8);
+        let (start, _, l, r) = compute_tab_window(&w, 1, 60);
+        assert_eq!(start, 1, "window must start at first category");
+        assert!(!l, "no left cue when window touches the start");
+        assert!(r, "right cue still needed");
+    }
+
+    #[test]
+    fn drops_right_cue_when_active_near_end() {
+        let w = uniform(20, 8);
+        let n = w.len();
+        let (_, end, l, r) = compute_tab_window(&w, n - 1, 60);
+        assert_eq!(end, n, "window must reach the last category");
+        assert!(l);
+        assert!(!r);
+    }
+
+    #[test]
+    fn all_pane_selected_anchors_window_left() {
+        // When "0:all" is active, the category window stays left-aligned
+        // (no left cue), since centering on "all" doesn't make sense.
+        let w = uniform(20, 8);
+        let (start, _, l, _) = compute_tab_window(&w, 0, 60);
+        assert_eq!(start, 1);
+        assert!(!l);
+    }
+
+    #[test]
+    fn graceful_fallback_when_active_alone_overflows() {
+        // Width too narrow for "0:all" + active + cues. We still return a
+        // single-tab window so something renders.
+        let w = uniform(5, 30);
+        let (start, end, _, _) = compute_tab_window(&w, 3, 10);
+        assert_eq!(end - start, 1);
+        assert_eq!(start, 3);
     }
 }
