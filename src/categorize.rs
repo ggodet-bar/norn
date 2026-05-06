@@ -55,7 +55,7 @@ fn strip_ansi(s: &str) -> String {
 
 fn dashed_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"-\s*([^-]+?)\s*-").unwrap())
+    R.get_or_init(|| Regex::new(r"-\s+([^\s]+)\s+-").unwrap())
 }
 
 fn bracketed_re() -> &'static Regex {
@@ -242,10 +242,8 @@ mod tests {
         assert_eq!(cats, vec!["Main".to_string()]);
         let cats = extract("2026-01-01 - INFO file-name-here.log");
         assert_eq!(cats, Vec::<String>::new());
-        // NOTE This testcase is currently a limitation. While we could introduce a rationale to
-        // avoid the unwanted match, it is not a high priority issue.
-        // let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main - some-dashed-payload");
-        // assert_eq!(cats, vec!["Main".to_string()]);
+        let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main - some-dashed-payload");
+        assert_eq!(cats, vec!["Main".to_string()]);
         let cats = extract("[a] - [b] xxxxxxx some-dashed-payload");
         assert_eq!(cats, vec!["a".to_string(), "b".to_string()]);
     }
@@ -254,5 +252,11 @@ mod tests {
     fn multiple_dashed_categories_extend_header() {
         let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main - Server - Cluster0 - Cargo Profile: debug");
         assert_eq!(cats, vec!["Main".to_string(), "Server".to_string(), "Cluster0".to_string()]);
+    }
+
+    #[test]
+    fn dashed_categories_with_inner_dashes_extend_header() {
+        let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main-Process - payload");
+        assert_eq!(cats, vec!["Main-Process".to_string()]);
     }
 }
