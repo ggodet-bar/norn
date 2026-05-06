@@ -19,7 +19,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::app::App;
-use crate::capture::{LogLine, pipe_into};
+use crate::capture::{LogLine, pipe_into, tail_into};
 
 const DEFAULT_MAX_LINES: usize = 10_000;
 
@@ -28,6 +28,7 @@ struct Args {
     max_lines: Option<usize>,
     path: Option<PathBuf>,
     no_line_numbers: bool,
+    follow: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -39,7 +40,12 @@ fn main() -> anyhow::Result<()> {
     let file_mode = args.path.is_some();
     let max_lines = match &args.path {
         Some(path) => {
-            pipe_into(File::open(path)?, tx);
+            let file = File::open(path)?;
+            if args.follow {
+                tail_into(file, tx);
+            } else {
+                pipe_into(file, tx);
+            }
             None
         }
         None => {
@@ -76,6 +82,7 @@ fn parse_args() -> anyhow::Result<Args> {
     let mut max_lines: Option<usize> = Some(DEFAULT_MAX_LINES);
     let mut path: Option<PathBuf> = None;
     let mut no_line_numbers = false;
+    let mut follow = false;
     while let Some((idx, arg)) = args.next() {
         match arg.as_str() {
             "-n" | "--max-lines" => {
@@ -95,6 +102,9 @@ fn parse_args() -> anyhow::Result<Args> {
             "-N" | "--no-line-numbers" => {
                 no_line_numbers = true;
             }
+            "-f" | "--follow" => {
+                follow = true;
+            }
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -111,10 +121,14 @@ fn parse_args() -> anyhow::Result<Args> {
             other => anyhow::bail!("unknown argument: {other}"),
         }
     }
+    if follow && path.is_none() {
+        return Err(anyhow!("--follow/-f requires a file path; cannot tail stdin"));
+    }
     Ok(Args {
         max_lines,
         path,
         no_line_numbers,
+        follow,
     })
 }
 
@@ -128,6 +142,7 @@ fn print_help() {
            -n, --max-lines N   retain at most N display rows; 0 = unlimited \
            (default: {DEFAULT_MAX_LINES})\n  \
            -N, --no-line-numbers   hide the line-number gutter (file mode only)\n  \
+           -f, --follow        keep reading the file as new lines are appended (file mode only)\n  \
            -V, --version       print version and exit\n  \
            -h, --help          show this help"
     );

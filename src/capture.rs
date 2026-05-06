@@ -1,6 +1,7 @@
 use std::io::{BufRead, BufReader, Read};
 use std::sync::mpsc::Sender;
 use std::thread;
+use std::time::Duration;
 
 #[derive(Debug)]
 pub struct LogLine {
@@ -20,6 +21,48 @@ where
             let raw = strip_non_sgr(&raw);
             if tx.send(LogLine { raw }).is_err() {
                 break;
+            }
+        }
+    });
+}
+
+/// Poll interval between EOF retries when tailing a file. 100ms keeps the UI
+/// snappy without measurable idle cost (one cheap syscall per tick).
+const TAIL_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Spawn a thread that follows `reader` `tail -f`-style: read appended bytes
+/// as they arrive, and on EOF sleep `TAIL_POLL_INTERVAL` and try again. Only
+/// complete lines (terminated by `\n`) are forwarded — a partial trailing
+/// line stays buffered until its newline arrives, so a producer that flushes
+/// mid-line doesn't surface as two split rows. The thread exits on send
+/// failure or hard I/O error; EOF alone is not terminal.
+pub fn tail_into<R>(reader: R, tx: Sender<LogLine>)
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut reader = BufReader::new(reader);
+        let mut buf = String::new();
+        loop {
+            match reader.read_line(&mut buf) {
+                Ok(0) => thread::sleep(TAIL_POLL_INTERVAL),
+                Ok(_) => {
+                    if !buf.ends_with('\n') {
+                        // Partial line: producer hasn't flushed the newline
+                        // yet. Keep accumulating across iterations.
+                        continue;
+                    }
+                    buf.pop();
+                    if buf.ends_with('\r') {
+                        buf.pop();
+                    }
+                    let raw = strip_non_sgr(&buf);
+                    if tx.send(LogLine { raw }).is_err() {
+                        break;
+                    }
+                    buf.clear();
+                }
+                Err(_) => break,
             }
         }
     });
@@ -100,7 +143,52 @@ fn strip_non_sgr(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_non_sgr;
+    use super::{LogLine, strip_non_sgr, tail_into};
+    use std::fs::{File, OpenOptions};
+    use std::io::Write;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn tail_into_emits_appended_and_buffers_partial_lines() {
+        let path = std::env::temp_dir().join(format!(
+            "norn_tail_{}_{:?}.log",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        {
+            let mut f = File::create(&path).unwrap();
+            writeln!(f, "first").unwrap();
+        }
+
+        let (tx, rx) = mpsc::channel::<LogLine>();
+        tail_into(File::open(&path).unwrap(), tx);
+
+        let line = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(line.raw, "first");
+
+        let mut writer = OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(writer, "second").unwrap();
+        writeln!(writer, "third").unwrap();
+        let l2 = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let l3 = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(l2.raw, "second");
+        assert_eq!(l3.raw, "third");
+
+        // Partial line should be held back until its newline arrives.
+        write!(writer, "partial").unwrap();
+        writer.flush().unwrap();
+        assert!(
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "partial line emitted prematurely"
+        );
+        writeln!(writer, "-rest").unwrap();
+        let l4 = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(l4.raw, "partial-rest");
+
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn keeps_sgr() {
