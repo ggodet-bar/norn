@@ -26,7 +26,10 @@ pub struct ViewState {
 
 impl ViewState {
     fn new() -> Self {
-        Self { scroll: 0, follow: true }
+        Self {
+            scroll: 0,
+            follow: true,
+        }
     }
 
     fn scroll_up(&mut self, n: usize) {
@@ -164,14 +167,15 @@ impl App {
             }
 
             let promote = {
-                let entry = self.pending.entry(cat_name.clone()).or_insert_with(|| {
-                    PendingCategory {
-                        hits: 0,
-                        rows: Vec::new(),
-                        last_seen_seq: seq,
-                        recent_seqs: VecDeque::with_capacity(BURST_HITS),
-                    }
-                });
+                let entry =
+                    self.pending
+                        .entry(cat_name.clone())
+                        .or_insert_with(|| PendingCategory {
+                            hits: 0,
+                            rows: Vec::new(),
+                            last_seen_seq: seq,
+                            recent_seqs: VecDeque::with_capacity(BURST_HITS),
+                        });
                 if entry.recent_seqs.len() == BURST_HITS {
                     entry.recent_seqs.pop_front();
                 }
@@ -306,18 +310,22 @@ impl App {
     /// returns the number of matches found. Empty input clears the search.
     /// Pane rows are local (0-based within the active pane), so "all" rows
     /// map 1:1 with `rendered`, while category rows index `cat.indices`.
-    pub fn commit_search(
-        &mut self,
-        raw: &str,
-        is_regex: bool,
-    ) -> Result<usize, regex::Error> {
+    pub fn commit_search(&mut self, raw: &str, is_regex: bool) -> Result<usize, regex::Error> {
         if raw.is_empty() {
             self.clear_search();
             return Ok(0);
         }
-        let pattern = if is_regex { raw.to_string() } else { regex::escape(raw) };
+        let pattern = if is_regex {
+            raw.to_string()
+        } else {
+            regex::escape(raw)
+        };
         let regex = Regex::new(&pattern)?;
-        let query = CompiledQuery { regex, raw: raw.to_string(), is_regex };
+        let query = CompiledQuery {
+            regex,
+            raw: raw.to_string(),
+            is_regex,
+        };
 
         let mut matches = Vec::new();
         if self.selected == 0 {
@@ -332,7 +340,11 @@ impl App {
         }
 
         let current = if matches.is_empty() { None } else { Some(0) };
-        let new_state = SearchState { query: Some(query), matches, current };
+        let new_state = SearchState {
+            query: Some(query),
+            matches,
+            current,
+        };
         let count = new_state.matches.len();
         *self.active_search_mut() = new_state;
         Ok(count)
@@ -380,7 +392,11 @@ impl App {
             closest_row_by(self.line_numbers.len(), |i| self.line_numbers[i], target)
         } else {
             let cat = &self.categories[self.selected - 1];
-            closest_row_by(cat.indices.len(), |i| self.line_numbers[cat.indices[i]], target)
+            closest_row_by(
+                cat.indices.len(),
+                |i| self.line_numbers[cat.indices[i]],
+                target,
+            )
         }?;
         let actual = if self.selected == 0 {
             self.line_numbers[row]
@@ -420,7 +436,12 @@ impl App {
         let q = self.main_search.query.as_ref().unwrap();
         let mut new_matches = Vec::new();
         for pane_row in start..end {
-            collect_matches(&q.regex, &self.rendered[pane_row], pane_row, &mut new_matches);
+            collect_matches(
+                &q.regex,
+                &self.rendered[pane_row],
+                pane_row,
+                &mut new_matches,
+            );
         }
         self.main_search.matches.extend(new_matches);
     }
@@ -432,7 +453,9 @@ impl App {
             return;
         }
         let cat = &self.categories[cat_idx];
-        let Some(q) = cat.search.query.as_ref() else { return };
+        let Some(q) = cat.search.query.as_ref() else {
+            return;
+        };
         let total = cat.indices.len();
         let first = total.saturating_sub(new_count);
         let mut new_matches = Vec::new();
@@ -457,7 +480,11 @@ fn plain_text(line: &Line<'static>) -> String {
 fn collect_matches(regex: &Regex, line: &Line<'static>, pane_row: usize, out: &mut Vec<RowMatch>) {
     let plain = plain_text(line);
     for m in regex.find_iter(&plain) {
-        out.push(RowMatch { row: pane_row, start: m.start(), end: m.end() });
+        out.push(RowMatch {
+            row: pane_row,
+            start: m.start(),
+            end: m.end(),
+        });
     }
 }
 
@@ -487,7 +514,11 @@ fn closest_row_by<F: Fn(usize) -> usize>(len: usize, key: F, target: usize) -> O
         (Some(prev), true) => {
             let d_prev = target - key(prev);
             let d_next = key(pos) - target;
-            if d_next < d_prev { Some(pos) } else { Some(prev) }
+            if d_next < d_prev {
+                Some(pos)
+            } else {
+                Some(prev)
+            }
         }
         (Some(prev), false) => Some(prev),
         (None, true) => Some(pos),
@@ -522,7 +553,9 @@ mod tests {
 
     fn push_lines(app: &mut App, lines: &[&str]) {
         for line in lines {
-            app.push(LogLine { raw: (*line).to_string() });
+            app.push(LogLine {
+                raw: (*line).to_string(),
+            });
         }
     }
 
@@ -662,7 +695,9 @@ mod tests {
         // Two distinct burst-promoted categories.
         push_lines(
             &mut app,
-            &["[db] 1", "[db] 2", "[db] 3", "[auth] 1", "[auth] 2", "[auth] 3"],
+            &[
+                "[db] 1", "[db] 2", "[db] 3", "[auth] 1", "[auth] 2", "[auth] 3",
+            ],
         );
         assert_eq!(app.categories.len(), 2);
         // Select the second category and ignore it; selection should fall

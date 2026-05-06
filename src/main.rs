@@ -14,12 +14,12 @@ use anyhow::anyhow;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::app::App;
-use crate::capture::{pipe_into, LogLine};
+use crate::capture::{LogLine, pipe_into};
 
 const DEFAULT_MAX_LINES: usize = 10_000;
 
@@ -111,7 +111,11 @@ fn parse_args() -> anyhow::Result<Args> {
             other => anyhow::bail!("unknown argument: {other}"),
         }
     }
-    Ok(Args { max_lines, path, no_line_numbers })
+    Ok(Args {
+        max_lines,
+        path,
+        no_line_numbers,
+    })
 }
 
 fn print_help() {
@@ -237,19 +241,14 @@ fn handle_scroll_key(key: &KeyEvent, app: &mut App, viewport: usize) -> bool {
 
 /// Dispatch a key to the appropriate per-mode handler. Returns `None` to
 /// quit the run loop or `Some(next)` for the next mode.
-fn handle_key(
-    mode: InputMode,
-    key: KeyEvent,
-    app: &mut App,
-    viewport: usize,
-) -> Option<InputMode> {
+fn handle_key(mode: InputMode, key: KeyEvent, app: &mut App, viewport: usize) -> Option<InputMode> {
     match mode {
-        InputMode::Search { buffer, is_regex, error } => {
-            handle_search_key(buffer, is_regex, error, key, app, viewport)
-        }
-        InputMode::Goto { buffer, error } => {
-            handle_goto_key(buffer, error, key, app, viewport)
-        }
+        InputMode::Search {
+            buffer,
+            is_regex,
+            error,
+        } => handle_search_key(buffer, is_regex, error, key, app, viewport),
+        InputMode::Goto { buffer, error } => handle_goto_key(buffer, error, key, app, viewport),
         InputMode::Normal => handle_normal_key(key, app, viewport),
     }
 }
@@ -263,12 +262,14 @@ fn handle_search_key(
     viewport: usize,
 ) -> Option<InputMode> {
     let stay = |buffer, is_regex, error| {
-        Some(InputMode::Search { buffer, is_regex, error })
+        Some(InputMode::Search {
+            buffer,
+            is_regex,
+            error,
+        })
     };
     match (key.code, key.modifiers) {
-        (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-            Some(InputMode::Normal)
-        }
+        (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(InputMode::Normal),
         (KeyCode::Enter, _) => match app.commit_search(&buffer, is_regex) {
             Ok(_) => {
                 if let Some(row) = current_match_row(app) {
@@ -306,9 +307,7 @@ fn handle_goto_key(
 ) -> Option<InputMode> {
     let stay = |buffer, error| Some(InputMode::Goto { buffer, error });
     match (key.code, key.modifiers) {
-        (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-            Some(InputMode::Normal)
-        }
+        (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(InputMode::Normal),
         (KeyCode::Enter, _) => {
             if buffer.is_empty() {
                 return Some(InputMode::Normal);
@@ -335,11 +334,7 @@ fn handle_goto_key(
     }
 }
 
-fn handle_normal_key(
-    key: KeyEvent,
-    app: &mut App,
-    viewport: usize,
-) -> Option<InputMode> {
+fn handle_normal_key(key: KeyEvent, app: &mut App, viewport: usize) -> Option<InputMode> {
     match (key.code, key.modifiers) {
         (KeyCode::Char('q'), _) => None,
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => None,
@@ -405,9 +400,7 @@ fn handle_normal_key(
 
 fn current_match_row(app: &App) -> Option<usize> {
     let s = app.active_search();
-    s.current
-        .and_then(|c| s.matches.get(c))
-        .map(|m| m.row)
+    s.current.and_then(|c| s.matches.get(c)).map(|m| m.row)
 }
 
 fn scroll_to_row(app: &mut App, row: usize, viewport: usize) {

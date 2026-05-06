@@ -4,9 +4,8 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 const LEVELS: &[&str] = &[
-    "TRACE", "TRC", "DEBUG", "DBG", "INFO", "INF", "NOTICE", "NOTE",
-    "WARN", "WARNING", "WRN", "ERROR", "ERR", "FATAL", "CRITICAL", "CRIT",
-    "VERBOSE", "VRB",
+    "TRACE", "TRC", "DEBUG", "DBG", "INFO", "INF", "NOTICE", "NOTE", "WARN", "WARNING", "WRN",
+    "ERROR", "ERR", "FATAL", "CRITICAL", "CRIT", "VERBOSE", "VRB",
 ];
 
 /// Bytes of "glue" punctuation tolerated between two header tokens before the
@@ -21,9 +20,11 @@ const MAX_GLUE: usize = 3;
 /// tokens separated by a few glue characters. Bracket/paren groups in the
 /// free-text payload are ignored, which is what keeps recurring parenthetical
 /// asides ("(session expired)", "(retrying)") out of the category set.
+/// Candidates between dashes, eg. `-...-` are parsed as a special case and returned
+/// immediately.
 pub fn extract(line: &str) -> Vec<String> {
     let plain = strip_ansi(line);
-    let header_end = header_end(&plain);
+    let (header_end, dashed_candidates) = header_end_and_dash_candidates(&plain);
     let mut out = Vec::new();
     let mut seen = HashSet::<String>::new();
 
@@ -38,6 +39,11 @@ pub fn extract(line: &str) -> Vec<String> {
             }
         }
     }
+    for dashed_candidate in dashed_candidates {
+        if accept_tag(&dashed_candidate) && seen.insert(dashed_candidate.clone()) {
+            out.push(dashed_candidate);
+        }
+    }
     out
 }
 
@@ -45,6 +51,11 @@ fn strip_ansi(s: &str) -> String {
     static R: OnceLock<Regex> = OnceLock::new();
     let re = R.get_or_init(|| Regex::new(r"\x1B\[[0-9;?]*[A-Za-z]").unwrap());
     re.replace_all(s, "").into_owned()
+}
+
+fn dashed_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"-\s*([^-]+?)\s*-").unwrap())
 }
 
 fn bracketed_re() -> &'static Regex {
@@ -63,7 +74,7 @@ fn parenthesized_re() -> &'static Regex {
 /// separated by up to `MAX_GLUE` bytes of punctuation/whitespace. Returns 0
 /// when no header token sits at the start — every bracket/paren group on
 /// such lines is then treated as payload and ignored.
-fn header_end(plain: &str) -> usize {
+fn header_end_and_dash_candidates(plain: &str) -> (usize, Vec<String>) {
     let bytes = plain.as_bytes();
     let mut i = 0;
     while i < bytes.len() && bytes[i].is_ascii_whitespace() {
@@ -74,23 +85,45 @@ fn header_end(plain: &str) -> usize {
     let mut last_end = i;
     let mut found_any = false;
 
+    let mut dashed_candidates = Vec::new();
+    let mut last_seen_dash = None;
     loop {
-        let Some(m) = re.find(&plain[i..]) else { break };
-        if m.start() != 0 {
-            break;
-        }
-        i += m.end();
+        if let Some(m) = re.find(&plain[i..]) {
+            if m.start() != 0 {
+                break;
+            }
+            i += m.end();
+        } else {
+            // Check for remaining tags based on non-whitespace glue characters (dashes, for now).
+            if let Some(dash_idx) = last_seen_dash && dash_idx >= last_end
+                && let Some(cap) = dashed_re().captures(&plain[dash_idx..])
+            {
+                let m = cap.get_match();
+                let cap = cap.get(1).unwrap();
+                if m.start() == 0 {
+                    i += cap.end() - (i - dash_idx);
+                    dashed_candidates.push(cap.as_str().to_owned());
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        };
         last_end = i;
         found_any = true;
 
         let mut glue = 0;
         while i < bytes.len() && glue < MAX_GLUE && is_glue(bytes[i]) {
+            if bytes[i] == b'-' {
+                last_seen_dash = Some(i);
+            }
             i += 1;
             glue += 1;
         }
     }
 
-    if found_any { last_end } else { 0 }
+    if found_any { (last_end, dashed_candidates) } else { (0, dashed_candidates) }
 }
 
 fn is_glue(b: u8) -> bool {
@@ -140,9 +173,8 @@ fn is_level(s: &str) -> bool {
 
 fn is_timestampish(s: &str) -> bool {
     static R: OnceLock<Regex> = OnceLock::new();
-    let re = R.get_or_init(|| {
-        Regex::new(r"\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}|^\d+(\.\d+)?$").unwrap()
-    });
+    let re =
+        R.get_or_init(|| Regex::new(r"\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}|^\d+(\.\d+)?$").unwrap());
     re.is_match(s)
 }
 
@@ -152,9 +184,7 @@ mod tests {
 
     #[test]
     fn paren_group_in_payload_is_excluded() {
-        let cats = extract(
-            "2026-05-06 12:00:00 INFO [auth] User did X (session expired)",
-        );
+        let cats = extract("2026-05-06 12:00:00 INFO [auth] User did X (session expired)");
         assert_eq!(cats, vec!["auth".to_string()]);
     }
 
@@ -204,5 +234,25 @@ mod tests {
              Rejecting pending position 62 while at px 2610.95",
         );
         assert_eq!(cats, vec!["Strategy/ETHUSDC".to_string()]);
+    }
+
+    #[test]
+    fn dash_separated_categories_extend_header() {
+        let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main - Cargo Profile: debug");
+        assert_eq!(cats, vec!["Main".to_string()]);
+        let cats = extract("2026-01-01 - INFO file-name-here.log");
+        assert_eq!(cats, Vec::<String>::new());
+        // NOTE This testcase is currently a limitation. While we could introduce a rationale to
+        // avoid the unwanted match, it is not a high priority issue.
+        // let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main - some-dashed-payload");
+        // assert_eq!(cats, vec!["Main".to_string()]);
+        let cats = extract("[a] - [b] xxxxxxx some-dashed-payload");
+        assert_eq!(cats, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn multiple_dashed_categories_extend_header() {
+        let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main - Server - Cluster0 - Cargo Profile: debug");
+        assert_eq!(cats, vec!["Main".to_string(), "Server".to_string(), "Cluster0".to_string()]);
     }
 }

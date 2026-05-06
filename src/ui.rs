@@ -30,7 +30,11 @@ pub fn draw(f: &mut Frame, app: &mut App, mode: &InputMode) {
     draw_tabs(f, app, chunks[0]);
     draw_log(f, app, chunks[1]);
     match mode {
-        InputMode::Search { buffer, is_regex, error } => {
+        InputMode::Search {
+            buffer,
+            is_regex,
+            error,
+        } => {
             draw_search_bar(f, buffer, *is_regex, error.as_deref(), chunks[2]);
         }
         InputMode::Goto { buffer, error } => {
@@ -46,9 +50,12 @@ pub fn draw(f: &mut Frame, app: &mut App, mode: &InputMode) {
 /// either direction.
 fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
     let labels: Vec<String> = std::iter::once("0:all".to_string())
-        .chain(app.categories.iter().enumerate().map(|(i, c)| {
-            format!("{}:{}", i + 1, truncate(&c.name, 20))
-        }))
+        .chain(
+            app.categories
+                .iter()
+                .enumerate()
+                .map(|(i, c)| format!("{}:{}", i + 1, truncate(&c.name, 20))),
+        )
         .collect();
     // Each tab body is rendered as ` label ` so width is `chars + 2`.
     let widths: Vec<usize> = labels.iter().map(|l| l.chars().count() + 2).collect();
@@ -212,7 +219,10 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             let cat = &app.categories[app.selected - 1];
             (
-                cat.indices.iter().map(|&i| app.rendered[i].clone()).collect(),
+                cat.indices
+                    .iter()
+                    .map(|&i| app.rendered[i].clone())
+                    .collect(),
                 cat.indices.clone(),
                 cat.indices.len(),
             )
@@ -321,7 +331,10 @@ fn apply_search_highlights(lines: &mut [Line<'static>], app: &App) {
         } else {
             MATCH_STYLE
         };
-        by_row.entry(m.row).or_default().push((m.start, m.end, style));
+        by_row
+            .entry(m.row)
+            .or_default()
+            .push((m.start, m.end, style));
     }
     for (row, ranges) in &by_row {
         if let Some(line) = lines.get_mut(*row) {
@@ -416,18 +429,14 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_search_bar(
-    f: &mut Frame,
-    buffer: &str,
-    is_regex: bool,
-    error: Option<&str>,
-    area: Rect,
-) {
+fn draw_search_bar(f: &mut Frame, buffer: &str, is_regex: bool, error: Option<&str>, area: Rect) {
     let prefix = if is_regex { "re/" } else { "/" };
     let mut spans = vec![
         Span::styled(
             format!(" {prefix}"),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(buffer.to_string(), Style::default().fg(Color::White)),
         // A trailing block stands in for a cursor.
@@ -455,7 +464,9 @@ fn draw_goto_bar(f: &mut Frame, buffer: &str, error: Option<&str>, area: Rect) {
     let mut spans = vec![
         Span::styled(
             " :".to_string(),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(buffer.to_string(), Style::default().fg(Color::White)),
         Span::styled("▏", Style::default().fg(Color::White)),
