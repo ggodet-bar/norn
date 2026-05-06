@@ -365,6 +365,19 @@ impl App {
         Some(s.matches[prev].row)
     }
 
+    /// Map an input line number (as shown in the gutter) to a pane-local row
+    /// in the active pane. Returns `None` when the pane is empty. When `target`
+    /// is not present in the pane, returns the row with the closest input
+    /// line number; ties prefer the earlier row.
+    pub fn goto_input_line(&self, target: usize) -> Option<usize> {
+        if self.selected == 0 {
+            closest_row_by(self.line_numbers.len(), |i| self.line_numbers[i], target)
+        } else {
+            let cat = &self.categories[self.selected - 1];
+            closest_row_by(cat.indices.len(), |i| self.line_numbers[cat.indices[i]], target)
+        }
+    }
+
     pub fn active_search(&self) -> &SearchState {
         if self.selected == 0 {
             &self.main_search
@@ -428,6 +441,40 @@ fn collect_matches(regex: &Regex, line: &Line<'static>, pane_row: usize, out: &m
     let plain = plain_text(line);
     for m in regex.find_iter(&plain) {
         out.push(RowMatch { row: pane_row, start: m.start(), end: m.end() });
+    }
+}
+
+/// Find the row in `0..len` whose `key(row)` is closest to `target`. The
+/// sequence produced by `key` must be non-decreasing. On exact match, the
+/// first matching row wins; on ties between neighbours, the lower row wins.
+fn closest_row_by<F: Fn(usize) -> usize>(len: usize, key: F, target: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    // Binary search for the first row whose key is >= target.
+    let mut lo = 0;
+    let mut hi = len;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if key(mid) < target {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    let pos = lo;
+    if pos < len && key(pos) == target {
+        return Some(pos);
+    }
+    match (pos.checked_sub(1), pos < len) {
+        (Some(prev), true) => {
+            let d_prev = target - key(prev);
+            let d_next = key(pos) - target;
+            if d_next < d_prev { Some(pos) } else { Some(prev) }
+        }
+        (Some(prev), false) => Some(prev),
+        (None, true) => Some(pos),
+        (None, false) => None,
     }
 }
 
@@ -615,6 +662,52 @@ mod tests {
         push_lines(&mut app, &["foo"]);
         app.ignore_active_category();
         assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn goto_returns_none_on_empty_pane() {
+        let app = App::new(None);
+        assert_eq!(app.goto_input_line(1), None);
+    }
+
+    #[test]
+    fn goto_exact_match_in_all_pane() {
+        let mut app = App::new(None);
+        push_lines(&mut app, &["one", "two", "three"]);
+        assert_eq!(app.goto_input_line(2), Some(1));
+    }
+
+    #[test]
+    fn goto_clamps_above_max_in_all_pane() {
+        let mut app = App::new(None);
+        push_lines(&mut app, &["one", "two", "three"]);
+        assert_eq!(app.goto_input_line(99), Some(2));
+    }
+
+    #[test]
+    fn goto_clamps_below_min_in_all_pane() {
+        let mut app = App::new(Some(2));
+        push_lines(&mut app, &["one", "two", "three", "four"]);
+        // Oldest survivor is line 3 (input_seq starts at 1).
+        assert_eq!(app.goto_input_line(1), Some(0));
+    }
+
+    #[test]
+    fn goto_in_category_pane_picks_closest() {
+        let mut app = App::new(None);
+        // Burst-promote `[db]`, then push lines that bypass it so the
+        // category's input line numbers skip values.
+        push_lines(&mut app, &["[db] 1", "[db] 2", "[db] 3"]);
+        assert_eq!(app.categories.len(), 1);
+        push_lines(&mut app, &["plain a", "plain b", "[db] 4"]);
+        app.selected = 1;
+        // The pane's input line numbers are [1, 2, 3, 6]. Target 5 sits
+        // closer to 6 (distance 1) than 3 (distance 2).
+        assert_eq!(app.goto_input_line(5), Some(3));
+        // Tie: target 4 is equidistant from 3 and 6; the earlier row wins.
+        assert_eq!(app.goto_input_line(4), Some(2));
+        // Exact match.
+        assert_eq!(app.goto_input_line(2), Some(1));
     }
 
     #[test]

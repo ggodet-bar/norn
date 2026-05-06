@@ -140,6 +140,10 @@ pub enum InputMode {
         is_regex: bool,
         error: Option<String>,
     },
+    Goto {
+        buffer: String,
+        error: Option<String>,
+    },
 }
 
 fn run<B: ratatui::backend::Backend>(
@@ -239,6 +243,9 @@ fn handle_key(
         InputMode::Search { buffer, is_regex, error } => {
             handle_search_key(buffer, is_regex, error, key, app, viewport)
         }
+        InputMode::Goto { buffer, error } => {
+            handle_goto_key(buffer, error, key, app, viewport)
+        }
         InputMode::Normal => handle_normal_key(key, app, viewport),
     }
 }
@@ -286,6 +293,44 @@ fn handle_search_key(
     }
 }
 
+fn handle_goto_key(
+    mut buffer: String,
+    error: Option<String>,
+    key: KeyEvent,
+    app: &mut App,
+    viewport: usize,
+) -> Option<InputMode> {
+    let stay = |buffer, error| Some(InputMode::Goto { buffer, error });
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            Some(InputMode::Normal)
+        }
+        (KeyCode::Enter, _) => {
+            if buffer.is_empty() {
+                return Some(InputMode::Normal);
+            }
+            match buffer.parse::<usize>() {
+                Ok(target) => {
+                    if let Some(row) = app.goto_input_line(target) {
+                        scroll_to_row(app, row, viewport);
+                    }
+                    Some(InputMode::Normal)
+                }
+                Err(e) => stay(buffer, Some(e.to_string())),
+            }
+        }
+        (KeyCode::Backspace, _) => {
+            buffer.pop();
+            stay(buffer, None)
+        }
+        (KeyCode::Char(c), m) if c.is_ascii_digit() && (m - KeyModifiers::SHIFT).is_empty() => {
+            buffer.push(c);
+            stay(buffer, None)
+        }
+        _ => stay(buffer, error),
+    }
+}
+
 fn handle_normal_key(
     key: KeyEvent,
     app: &mut App,
@@ -307,6 +352,10 @@ fn handle_normal_key(
         (KeyCode::Char('/'), _) => Some(InputMode::Search {
             buffer: String::new(),
             is_regex: false,
+            error: None,
+        }),
+        (KeyCode::Char(':'), _) => Some(InputMode::Goto {
+            buffer: String::new(),
             error: None,
         }),
         (KeyCode::Char('n'), m) if !m.contains(KeyModifiers::CONTROL) => {

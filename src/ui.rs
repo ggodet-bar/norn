@@ -33,6 +33,9 @@ pub fn draw(f: &mut Frame, app: &mut App, mode: &InputMode) {
         InputMode::Search { buffer, is_regex, error } => {
             draw_search_bar(f, buffer, *is_regex, error.as_deref(), chunks[2]);
         }
+        InputMode::Goto { buffer, error } => {
+            draw_goto_bar(f, buffer, error.as_deref(), chunks[2]);
+        }
         InputMode::Normal => draw_status(f, app, chunks[2]),
     }
 }
@@ -369,7 +372,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         let prefix = if q.is_regex { "re/" } else { "/" };
         s.push_str(&format!("· {prefix}{} {pos}/{total} ", q.raw));
     }
-    s.push_str("· q quit · / search · n/N next/prev · ↑/↓ PgUp/PgDn scroll · End follow · Tab/0-9 panes · Ctrl-X hide ");
+    s.push_str("· q quit · / search · : goto · n/N next/prev · ↑/↓ PgUp/PgDn scroll · End follow · Tab/0-9 panes · Ctrl-X hide ");
     f.render_widget(
         Paragraph::new(s).style(Style::default().fg(Color::Black).bg(Color::Cyan)),
         area,
@@ -401,6 +404,33 @@ fn draw_search_bar(
     } else {
         spans.push(Span::styled(
             "  Enter: apply · Esc: cancel · Ctrl-R: regex".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    let line = Line::from(spans);
+    f.render_widget(
+        Paragraph::new(line).style(Style::default().bg(Color::Black)),
+        area,
+    );
+}
+
+fn draw_goto_bar(f: &mut Frame, buffer: &str, error: Option<&str>, area: Rect) {
+    let mut spans = vec![
+        Span::styled(
+            " :".to_string(),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(buffer.to_string(), Style::default().fg(Color::White)),
+        Span::styled("▏", Style::default().fg(Color::White)),
+    ];
+    if let Some(err) = error {
+        spans.push(Span::styled(
+            format!("  [{err}]"),
+            Style::default().fg(Color::LightRed),
+        ));
+    } else {
+        spans.push(Span::styled(
+            "  Enter: go to line · Esc: cancel".to_string(),
             Style::default().fg(Color::DarkGray),
         ));
     }
