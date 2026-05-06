@@ -196,6 +196,10 @@ fn run<B: ratatui::backend::Backend>(
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+                // The goto highlight is one-shot: any new keypress clears
+                // the previous goto's flag before the handler runs, so this
+                // very keypress's goto-Enter (if any) can re-set it.
+                app.clear_goto_highlight();
                 let viewport = terminal
                     .size()
                     .map(|s| s.height.saturating_sub(3) as usize)

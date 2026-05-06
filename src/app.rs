@@ -111,6 +111,10 @@ pub struct App {
     pub selected: usize,
     /// Render an input-line-number gutter in the log pane.
     pub show_line_numbers: bool,
+    /// Input line number flagged by the most recent successful goto. The
+    /// run loop clears this on the next user keypress so the highlight
+    /// disappears as soon as the user moves on.
+    pub goto_highlight: Option<usize>,
 }
 
 impl App {
@@ -128,6 +132,7 @@ impl App {
             input_seq: 0,
             selected: 0,
             show_line_numbers: false,
+            goto_highlight: None,
         }
     }
 
@@ -368,14 +373,26 @@ impl App {
     /// Map an input line number (as shown in the gutter) to a pane-local row
     /// in the active pane. Returns `None` when the pane is empty. When `target`
     /// is not present in the pane, returns the row with the closest input
-    /// line number; ties prefer the earlier row.
-    pub fn goto_input_line(&self, target: usize) -> Option<usize> {
-        if self.selected == 0 {
+    /// line number; ties prefer the earlier row. Also stores the matching
+    /// input line in `goto_highlight` so the renderer can flag it.
+    pub fn goto_input_line(&mut self, target: usize) -> Option<usize> {
+        let row = if self.selected == 0 {
             closest_row_by(self.line_numbers.len(), |i| self.line_numbers[i], target)
         } else {
             let cat = &self.categories[self.selected - 1];
             closest_row_by(cat.indices.len(), |i| self.line_numbers[cat.indices[i]], target)
-        }
+        }?;
+        let actual = if self.selected == 0 {
+            self.line_numbers[row]
+        } else {
+            self.line_numbers[self.categories[self.selected - 1].indices[row]]
+        };
+        self.goto_highlight = Some(actual);
+        Some(row)
+    }
+
+    pub fn clear_goto_highlight(&mut self) {
+        self.goto_highlight = None;
     }
 
     pub fn active_search(&self) -> &SearchState {
@@ -666,8 +683,9 @@ mod tests {
 
     #[test]
     fn goto_returns_none_on_empty_pane() {
-        let app = App::new(None);
+        let mut app = App::new(None);
         assert_eq!(app.goto_input_line(1), None);
+        assert_eq!(app.goto_highlight, None);
     }
 
     #[test]
@@ -675,6 +693,9 @@ mod tests {
         let mut app = App::new(None);
         push_lines(&mut app, &["one", "two", "three"]);
         assert_eq!(app.goto_input_line(2), Some(1));
+        assert_eq!(app.goto_highlight, Some(2));
+        app.clear_goto_highlight();
+        assert_eq!(app.goto_highlight, None);
     }
 
     #[test]
@@ -706,8 +727,11 @@ mod tests {
         assert_eq!(app.goto_input_line(5), Some(3));
         // Tie: target 4 is equidistant from 3 and 6; the earlier row wins.
         assert_eq!(app.goto_input_line(4), Some(2));
+        // Highlight follows the actual line we landed on, not the typed target.
+        assert_eq!(app.goto_highlight, Some(3));
         // Exact match.
         assert_eq!(app.goto_input_line(2), Some(1));
+        assert_eq!(app.goto_highlight, Some(2));
     }
 
     #[test]

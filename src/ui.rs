@@ -219,9 +219,17 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
         };
 
     apply_search_highlights(&mut lines, app);
+    let goto_mask: Vec<bool> = match app.goto_highlight {
+        Some(target) => render_rows
+            .iter()
+            .map(|&r| app.line_numbers.get(r).copied() == Some(target))
+            .collect(),
+        None => Vec::new(),
+    };
     if app.show_line_numbers {
-        prepend_line_number_gutter(&mut lines, &render_rows, &app.line_numbers);
+        prepend_line_number_gutter(&mut lines, &render_rows, &app.line_numbers, &goto_mask);
     }
+    apply_goto_highlight(&mut lines, &goto_mask);
 
     let max_scroll = total.saturating_sub(viewport);
     let (view, _) = app.active_view_mut();
@@ -244,6 +252,7 @@ fn prepend_line_number_gutter(
     lines: &mut [Line<'static>],
     render_rows: &[usize],
     numbers: &[usize],
+    goto_mask: &[bool],
 ) {
     if lines.is_empty() {
         return;
@@ -254,19 +263,47 @@ fn prepend_line_number_gutter(
         .max()
         .unwrap_or(0);
     let width = max.to_string().len().max(1);
-    let style = Style::default().fg(Color::DarkGray);
+    let normal = Style::default().fg(Color::DarkGray);
+    let highlight = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
     let mut prev: Option<usize> = None;
-    for (line, &r) in lines.iter_mut().zip(render_rows.iter()) {
+    for (i, (line, &r)) in lines.iter_mut().zip(render_rows.iter()).enumerate() {
         let n = numbers.get(r).copied();
         let label = match n {
             Some(num) if Some(num) != prev => format!("{:>width$} │ ", num, width = width),
             _ => format!("{:>width$} │ ", "", width = width),
         };
         prev = n;
+        let style = if goto_mask.get(i).copied().unwrap_or(false) {
+            highlight
+        } else {
+            normal
+        };
         let mut spans = Vec::with_capacity(line.spans.len() + 1);
         spans.push(Span::styled(label, style));
         spans.extend(line.spans.drain(..));
         *line = Line::from(spans);
+    }
+}
+
+/// Patch a discrete background colour onto every span of a row whose
+/// `goto_mask` entry is true. Existing span backgrounds (e.g. search
+/// match highlights) keep precedence — `Style::patch` only fills in
+/// fields that are unset on the span.
+fn apply_goto_highlight(lines: &mut [Line<'static>], goto_mask: &[bool]) {
+    if goto_mask.is_empty() {
+        return;
+    }
+    let bg = Style::default().bg(Color::DarkGray);
+    for (i, line) in lines.iter_mut().enumerate() {
+        if !goto_mask.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        for span in &mut line.spans {
+            span.style = bg.patch(span.style);
+        }
+        line.style = bg.patch(line.style);
     }
 }
 
