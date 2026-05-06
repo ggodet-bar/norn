@@ -409,7 +409,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         let prefix = if q.is_regex { "re/" } else { "/" };
         s.push_str(&format!("· {prefix}{} {pos}/{total} ", q.raw));
     }
-    s.push_str("· q quit · / search · : goto · n/N next/prev · ↑/↓ PgUp/PgDn scroll · End follow · Tab/0-9 panes · Ctrl-X hide ");
+    s.push_str("· q quit · / search · : goto · n/N next/prev · ↑/↓ PgUp/PgDn scroll · g/G top/bottom · End follow · Tab/0-9 panes · Ctrl-X hide ");
     f.render_widget(
         Paragraph::new(s).style(Style::default().fg(Color::Black).bg(Color::Cyan)),
         area,

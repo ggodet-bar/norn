@@ -362,6 +362,14 @@ fn handle_normal_key(
             buffer: String::new(),
             error: None,
         }),
+        (KeyCode::Char('g'), m) if !m.contains(KeyModifiers::CONTROL) => {
+            app.scroll_top();
+            Some(InputMode::Normal)
+        }
+        (KeyCode::Char('G'), _) => {
+            app.scroll_bottom();
+            Some(InputMode::Normal)
+        }
         (KeyCode::Char('n'), m) if !m.contains(KeyModifiers::CONTROL) => {
             if let Some(row) = app.search_next() {
                 scroll_to_row(app, row, viewport);
