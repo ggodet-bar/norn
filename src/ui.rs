@@ -69,9 +69,9 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
         spans.push(divider_span());
         spans.push(cue_span("‹"));
     }
-    for i in start..end {
+    for (i, label) in labels.iter().enumerate().take(end).skip(start) {
         spans.push(divider_span());
-        spans.extend(tab_spans(&labels[i], app.selected == i));
+        spans.extend(tab_spans(label, app.selected == i));
     }
     if show_right {
         spans.push(divider_span());
@@ -234,10 +234,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     // and goto highlight can look up input line numbers.
     let (mut lines, render_rows): (Vec<Line<'static>>, Vec<usize>) = if app.selected == 0 {
         (
-            app.rendered
-                .range(scroll..visible_end)
-                .cloned()
-                .collect(),
+            app.rendered.range(scroll..visible_end).cloned().collect(),
             (scroll..visible_end).collect(),
         )
     } else {
@@ -317,7 +314,7 @@ fn prepend_line_number_gutter(
         };
         let mut spans = Vec::with_capacity(line.spans.len() + 1);
         spans.push(Span::styled(label, style));
-        spans.extend(line.spans.drain(..));
+        spans.append(&mut line.spans);
         *line = Line::from(spans);
     }
 }

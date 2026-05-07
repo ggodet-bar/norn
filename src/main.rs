@@ -245,8 +245,7 @@ fn run<B: ratatui::backend::Backend>(
             last_draw = Instant::now();
         }
 
-        if event::poll(tick)? {
-            if let Event::Key(key) = event::read()? {
+        if event::poll(tick)? && let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
@@ -268,7 +267,6 @@ fn run<B: ratatui::backend::Backend>(
                     Some(next) => input_mode = next,
                     None => return Ok(()),
                 }
-            }
         }
     }
 }
