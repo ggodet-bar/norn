@@ -41,14 +41,17 @@ fn main() -> anyhow::Result<()> {
     let (max_lines, display_follow) = match &args.path {
         Some(path) => {
             let file = File::open(path)?;
-            let display_follow = if args.follow {
+            if args.follow {
                 tail_into(file, tx);
-                true
+                // A growing file under --follow needs the same buffer cap as
+                // stdin or it can grow without bound.
+                (args.max_lines, true)
             } else {
                 pipe_into(file, tx);
-                false
-            };
-            (None, display_follow)
+                // A finite file is shown in full; --max-lines is rejected at
+                // parse time for this mode.
+                (None, false)
+            }
         }
         None => {
             if io::stdin().is_terminal() {
@@ -113,17 +116,13 @@ fn install_panic_hook() {
 fn parse_args() -> anyhow::Result<Args> {
     let mut args = std::env::args().enumerate().skip(1);
     let mut max_lines: Option<usize> = Some(DEFAULT_MAX_LINES);
+    let mut max_lines_explicit = false;
     let mut path: Option<PathBuf> = None;
     let mut no_line_numbers = false;
     let mut follow = false;
     while let Some((idx, arg)) = args.next() {
         match arg.as_str() {
             "-n" | "--max-lines" => {
-                if path.is_some() {
-                    return Err(anyhow!(
-                        "max lines argument not supported when displaying a file"
-                    ));
-                }
                 let (_, value) = args
                     .next()
                     .ok_or_else(|| anyhow!("{arg} requires a value"))?;
@@ -131,6 +130,7 @@ fn parse_args() -> anyhow::Result<Args> {
                     .parse()
                     .map_err(|e| anyhow!("{arg}: invalid integer {value:?}: {e}"))?;
                 max_lines = if n == 0 { None } else { Some(n) };
+                max_lines_explicit = true;
             }
             "-N" | "--no-line-numbers" => {
                 no_line_numbers = true;
@@ -157,6 +157,11 @@ fn parse_args() -> anyhow::Result<Args> {
     if follow && path.is_none() {
         return Err(anyhow!(
             "--follow/-f requires a file path; cannot tail stdin"
+        ));
+    }
+    if max_lines_explicit && path.is_some() && !follow {
+        return Err(anyhow!(
+            "--max-lines/-n only applies to stdin or --follow; a finite file is shown in full"
         ));
     }
     Ok(Args {
