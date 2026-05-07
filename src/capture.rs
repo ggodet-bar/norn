@@ -9,18 +9,33 @@ pub struct LogLine {
 }
 
 /// Spawn a thread that reads `reader` line-by-line and forwards each line on
-/// `tx`. The thread exits on EOF or send failure.
+/// `tx`. The thread exits on EOF, hard I/O error, or send failure. Bytes
+/// are read raw and decoded lossily so a single invalid-UTF-8 line surfaces
+/// as a row with replacement characters instead of killing the feed.
 pub fn pipe_into<R>(reader: R, tx: Sender<LogLine>)
 where
     R: Read + Send + 'static,
 {
     thread::spawn(move || {
-        let reader = BufReader::new(reader);
-        for line in reader.lines() {
-            let Ok(raw) = line else { break };
-            let raw = strip_non_sgr(&raw);
-            if tx.send(LogLine { raw }).is_err() {
-                break;
+        let mut reader = BufReader::new(reader);
+        let mut buf: Vec<u8> = Vec::with_capacity(256);
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if buf.last() == Some(&b'\n') {
+                        buf.pop();
+                    }
+                    if buf.last() == Some(&b'\r') {
+                        buf.pop();
+                    }
+                    let raw = strip_non_sgr(&buf);
+                    if tx.send(LogLine { raw }).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
             }
         }
     });
@@ -42,18 +57,18 @@ where
 {
     thread::spawn(move || {
         let mut reader = BufReader::new(reader);
-        let mut buf = String::new();
+        let mut buf: Vec<u8> = Vec::with_capacity(256);
         loop {
-            match reader.read_line(&mut buf) {
+            match reader.read_until(b'\n', &mut buf) {
                 Ok(0) => thread::sleep(TAIL_POLL_INTERVAL),
                 Ok(_) => {
-                    if !buf.ends_with('\n') {
+                    if buf.last() != Some(&b'\n') {
                         // Partial line: producer hasn't flushed the newline
                         // yet. Keep accumulating across iterations.
                         continue;
                     }
                     buf.pop();
-                    if buf.ends_with('\r') {
+                    if buf.last() == Some(&b'\r') {
                         buf.pop();
                     }
                     let raw = strip_non_sgr(&buf);
@@ -72,9 +87,10 @@ where
 /// while preserving SGR (`ESC [ ... m`) styling. Producers that mix progress
 /// bars or full-screen redraws with normal log output otherwise leave
 /// fragments in the buffer that read as ghost characters once `ansi-to-tui`
-/// turns the stream into cells.
-fn strip_non_sgr(s: &str) -> String {
-    let bytes = s.as_bytes();
+/// turns the stream into cells. Operates on raw bytes so a producer that
+/// emits invalid UTF-8 surfaces as replacement characters instead of
+/// poisoning the entire feed.
+fn strip_non_sgr(bytes: &[u8]) -> String {
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
@@ -136,9 +152,14 @@ fn strip_non_sgr(s: &str) -> String {
         out.push(b);
         i += 1;
     }
-    // Filter only removes whole ASCII control sequences, so any multibyte
-    // UTF-8 in the source survives intact.
-    String::from_utf8(out).expect("filter preserves UTF-8 boundaries")
+    // The filter only removes whole ASCII control sequences, so a
+    // well-formed UTF-8 input round-trips zero-copy through the Ok
+    // arm. Invalid UTF-8 (a producer with a flaky encoder) falls
+    // back to a lossy decode rather than panicking.
+    match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -193,29 +214,36 @@ mod tests {
     #[test]
     fn keeps_sgr() {
         let s = "\x1b[31mred\x1b[0m";
-        assert_eq!(strip_non_sgr(s), s);
+        assert_eq!(strip_non_sgr(s.as_bytes()), s);
     }
 
     #[test]
     fn drops_cursor_and_erase() {
         let s = "before\x1b[2J\x1b[Hmid\x1b[Kend";
-        assert_eq!(strip_non_sgr(s), "beforemidend");
+        assert_eq!(strip_non_sgr(s.as_bytes()), "beforemidend");
     }
 
     #[test]
     fn drops_osc_and_bare_esc() {
         let s = "a\x1b]0;title\x07b\x1b(Bc";
-        assert_eq!(strip_non_sgr(s), "abc");
+        assert_eq!(strip_non_sgr(s.as_bytes()), "abc");
     }
 
     #[test]
     fn drops_carriage_return_and_backspace() {
-        assert_eq!(strip_non_sgr("ab\rcd\x08e"), "abcde");
+        assert_eq!(strip_non_sgr(b"ab\rcd\x08e"), "abcde");
     }
 
     #[test]
     fn preserves_utf8() {
         let s = "héllo \x1b[1mwörld\x1b[0m";
-        assert_eq!(strip_non_sgr(s), s);
+        assert_eq!(strip_non_sgr(s.as_bytes()), s);
+    }
+
+    #[test]
+    fn invalid_utf8_decodes_lossy_instead_of_panicking() {
+        // 0xff is a stray continuation byte — never valid UTF-8.
+        let out = strip_non_sgr(b"foo\xffbar");
+        assert_eq!(out, "foo\u{FFFD}bar");
     }
 }
