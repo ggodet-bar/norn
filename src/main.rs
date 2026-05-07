@@ -60,21 +60,52 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    let mut stdout = io::stdout();
-    enable_raw_mode()?;
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    install_panic_hook();
+    let (_guard, mut terminal) = TerminalGuard::new()?;
 
     let mut app = App::new(max_lines, display_follow);
     app.show_line_numbers = file_mode && !args.no_line_numbers;
-    let res = run(&mut terminal, &mut app, &rx, file_mode);
+    run(&mut terminal, &mut app, &rx, file_mode)
+}
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+/// RAII guard for the terminal's raw-mode + alternate-screen state.
+/// `Drop` restores the terminal even on panic or early-return error
+/// paths so the user's shell isn't left mid-altscreen with input
+/// echo disabled.
+struct TerminalGuard;
 
-    res
+impl TerminalGuard {
+    fn new() -> anyhow::Result<(Self, Terminal<CrosstermBackend<io::Stdout>>)> {
+        enable_raw_mode()?;
+        // Build the guard before any further fallible setup so a
+        // failure in EnterAlternateScreen / Terminal::new still
+        // triggers cleanup via Drop.
+        let guard = Self;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen)?;
+        let backend = CrosstermBackend::new(stdout);
+        let terminal = Terminal::new(backend)?;
+        Ok((guard, terminal))
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+    }
+}
+
+/// Wrap the default panic hook so the terminal is restored before the
+/// panic message is printed. Without this, panic output lands in the
+/// alternate screen and disappears when the shell takes over again.
+fn install_panic_hook() {
+    let original = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+        original(info);
+    }));
 }
 
 /// Parse CLI args. Returns the configured max-lines cap: `Some(n)` for a
