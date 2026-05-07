@@ -102,7 +102,8 @@ fn header_end_and_dash_candidates(plain: &str) -> (usize, Vec<String>) {
             i += m.end();
         } else {
             // Check for remaining tags based on non-whitespace glue characters (dashes, for now).
-            if let Some(dash_idx) = last_seen_dash && dash_idx >= last_end
+            if let Some(dash_idx) = last_seen_dash
+                && dash_idx >= last_end
                 && let Some(cap) = dashed_re().captures(&plain[dash_idx..])
             {
                 let m = cap.get_match();
@@ -130,7 +131,11 @@ fn header_end_and_dash_candidates(plain: &str) -> (usize, Vec<String>) {
         }
     }
 
-    if found_any { (last_end, dashed_candidates) } else { (0, dashed_candidates) }
+    if found_any {
+        (last_end, dashed_candidates)
+    } else {
+        (0, dashed_candidates)
+    }
 }
 
 fn is_glue(b: u8) -> bool {
@@ -268,8 +273,17 @@ mod tests {
 
     #[test]
     fn multiple_dashed_categories_extend_header() {
-        let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main - Server - Cluster0 - Cargo Profile: debug");
-        assert_eq!(cats, vec!["Main".to_string(), "Server".to_string(), "Cluster0".to_string()]);
+        let cats = extract(
+            "2026-05-02T09:43:45.729516 - INFO - Main - Server - Cluster0 - Cargo Profile: debug",
+        );
+        assert_eq!(
+            cats,
+            vec![
+                "Main".to_string(),
+                "Server".to_string(),
+                "Cluster0".to_string()
+            ]
+        );
     }
 
     #[test]

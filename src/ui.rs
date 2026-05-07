@@ -1,15 +1,15 @@
 use std::collections::{HashMap, VecDeque};
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
-use crate::app::App;
 use crate::InputMode;
+use crate::app::App;
 
 const MATCH_STYLE: Style = Style::new().bg(Color::Yellow).fg(Color::Black);
 const CURRENT_MATCH_STYLE: Style = Style::new()

@@ -14,12 +14,12 @@ use anyhow::anyhow;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::app::App;
-use crate::capture::{pipe_into, tail_into, LogLine};
+use crate::capture::{LogLine, pipe_into, tail_into};
 
 const DEFAULT_MAX_LINES: usize = 10_000;
 
@@ -245,28 +245,30 @@ fn run<B: ratatui::backend::Backend>(
             last_draw = Instant::now();
         }
 
-        if event::poll(tick)? && let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                // The goto highlight is one-shot: any new keypress clears
-                // the previous goto's flag before the handler runs, so this
-                // very keypress's goto-Enter (if any) can re-set it.
-                app.clear_goto_highlight();
-                let viewport = terminal
-                    .size()
-                    .map(|s| s.height.saturating_sub(3) as usize)
-                    .unwrap_or(0);
-                // Scroll keys always pass through, even mid-search edit, so
-                // the user can keep their bearings while composing a query.
-                if handle_scroll_key(&key, app, viewport) {
-                    continue;
-                }
-                let prev = std::mem::replace(&mut input_mode, InputMode::Normal);
-                match handle_key(prev, key, app, viewport) {
-                    Some(next) => input_mode = next,
-                    None => return Ok(()),
-                }
+        if event::poll(tick)?
+            && let Event::Key(key) = event::read()?
+        {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            // The goto highlight is one-shot: any new keypress clears
+            // the previous goto's flag before the handler runs, so this
+            // very keypress's goto-Enter (if any) can re-set it.
+            app.clear_goto_highlight();
+            let viewport = terminal
+                .size()
+                .map(|s| s.height.saturating_sub(3) as usize)
+                .unwrap_or(0);
+            // Scroll keys always pass through, even mid-search edit, so
+            // the user can keep their bearings while composing a query.
+            if handle_scroll_key(&key, app, viewport) {
+                continue;
+            }
+            let prev = std::mem::replace(&mut input_mode, InputMode::Normal);
+            match handle_key(prev, key, app, viewport) {
+                Some(next) => input_mode = next,
+                None => return Ok(()),
+            }
         }
     }
 }
