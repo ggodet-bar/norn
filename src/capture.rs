@@ -91,6 +91,13 @@ where
 /// emits invalid UTF-8 surfaces as replacement characters instead of
 /// poisoning the entire feed.
 fn strip_non_sgr(bytes: &[u8]) -> String {
+    // Fast path: most log lines are plain text. If there's no ESC,
+    // carriage return, or backspace anywhere in the input, the slow
+    // loop would copy every byte verbatim — skip straight to a
+    // single decode.
+    if !bytes.iter().any(|&b| b == 0x1b || b == b'\r' || b == 0x08) {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
@@ -47,10 +48,16 @@ pub fn extract(line: &str) -> Vec<String> {
     out
 }
 
-fn strip_ansi(s: &str) -> String {
+fn strip_ansi(s: &str) -> Cow<'_, str> {
+    // Most log lines have no ESC byte; skip the regex pass entirely
+    // and hand back the input as a borrow. Replace_all already
+    // returns Cow, so the slow path keeps its existing semantics.
+    if !s.contains('\x1b') {
+        return Cow::Borrowed(s);
+    }
     static R: OnceLock<Regex> = OnceLock::new();
     let re = R.get_or_init(|| Regex::new(r"\x1B\[[0-9;?]*[A-Za-z]").unwrap());
-    re.replace_all(s, "").into_owned()
+    re.replace_all(s, "")
 }
 
 fn dashed_re() -> &'static Regex {
