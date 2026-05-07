@@ -208,27 +208,45 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     let viewport = inner.height as usize;
 
-    // We clone Lines here only for the rendered frame; storage stays
-    // index-based per pane, so categories never duplicate the buffer.
-    // `render_rows` keeps the absolute index into `app.rendered` for each
-    // pane row so the line-number gutter can fetch input numbers below.
-    let (mut lines, render_rows, total): (Vec<Line<'static>>, Vec<usize>, usize) =
-        if app.selected == 0 {
-            let n = app.rendered.len();
-            (app.rendered.clone(), (0..n).collect(), n)
-        } else {
-            let cat = &app.categories[app.selected - 1];
-            (
-                cat.indices
-                    .iter()
-                    .map(|&i| app.rendered[i].clone())
-                    .collect(),
-                cat.indices.clone(),
-                cat.indices.len(),
-            )
-        };
+    let total = if app.selected == 0 {
+        app.rendered.len()
+    } else {
+        app.categories[app.selected - 1].indices.len()
+    };
 
-    apply_search_highlights(&mut lines, app);
+    // Reconcile follow / clamp first so we know the visible window before
+    // slicing. Doing this up front lets us clone only viewport-sized
+    // chunks and skip the per-frame full-buffer copy.
+    let max_scroll = total.saturating_sub(viewport);
+    let scroll = {
+        let (view, _) = app.active_view_mut();
+        if view.follow {
+            view.scroll = max_scroll;
+        } else {
+            view.scroll = view.scroll.min(max_scroll);
+        }
+        view.scroll
+    };
+    let visible_end = (scroll + viewport).min(total);
+
+    // Clone only the visible window. `render_rows` keeps the absolute
+    // index into `app.rendered` for each visible pane row so the gutter
+    // and goto highlight can look up input line numbers.
+    let (mut lines, render_rows): (Vec<Line<'static>>, Vec<usize>) = if app.selected == 0 {
+        (
+            app.rendered[scroll..visible_end].to_vec(),
+            (scroll..visible_end).collect(),
+        )
+    } else {
+        let cat = &app.categories[app.selected - 1];
+        let slice = &cat.indices[scroll..visible_end];
+        (
+            slice.iter().map(|&i| app.rendered[i].clone()).collect(),
+            slice.to_vec(),
+        )
+    };
+
+    apply_search_highlights(&mut lines, app, scroll);
     let goto_mask: Vec<bool> = match app.goto_highlight {
         Some(target) => render_rows
             .iter()
@@ -237,21 +255,29 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
         None => Vec::new(),
     };
     if app.show_line_numbers {
-        prepend_line_number_gutter(&mut lines, &render_rows, &app.line_numbers, &goto_mask);
+        // Use the largest input line number currently in the pane (not
+        // just the visible window) so the gutter width stays stable as
+        // the user scrolls.
+        let max_line_no = if app.selected == 0 {
+            app.line_numbers.last().copied().unwrap_or(0)
+        } else {
+            app.categories[app.selected - 1]
+                .indices
+                .last()
+                .and_then(|&i| app.line_numbers.get(i).copied())
+                .unwrap_or(0)
+        };
+        prepend_line_number_gutter(
+            &mut lines,
+            &render_rows,
+            &app.line_numbers,
+            &goto_mask,
+            max_line_no,
+        );
     }
     apply_goto_highlight(&mut lines, &goto_mask);
 
-    let max_scroll = total.saturating_sub(viewport);
-    let (view, _) = app.active_view_mut();
-    if view.follow {
-        view.scroll = max_scroll;
-    } else {
-        view.scroll = view.scroll.min(max_scroll);
-    }
-    let scroll = view.scroll as u16;
-
-    let p = Paragraph::new(lines).block(block).scroll((scroll, 0));
-    f.render_widget(p, area);
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// Prepend a right-aligned line-number gutter to each pane line. Width is
@@ -263,16 +289,12 @@ fn prepend_line_number_gutter(
     render_rows: &[usize],
     numbers: &[usize],
     goto_mask: &[bool],
+    max_line_no: usize,
 ) {
     if lines.is_empty() {
         return;
     }
-    let max = render_rows
-        .iter()
-        .filter_map(|&r| numbers.get(r).copied())
-        .max()
-        .unwrap_or(0);
-    let width = max.to_string().len().max(1);
+    let width = max_line_no.to_string().len().max(1);
     let normal = Style::default().fg(Color::DarkGray);
     let highlight = Style::default()
         .fg(Color::Yellow)
@@ -317,22 +339,32 @@ fn apply_goto_highlight(lines: &mut [Line<'static>], goto_mask: &[bool]) {
     }
 }
 
-/// Splice highlight styling into pane lines for every match in the active
-/// search. Lines without matches are left untouched.
-fn apply_search_highlights(lines: &mut [Line<'static>], app: &App) {
+/// Splice highlight styling into the visible pane lines for every match
+/// in the active search. `scroll` is the pane-local row of the first
+/// element of `lines`; matches outside `[scroll, scroll + lines.len())`
+/// are skipped. Match rows are translated to viewport-local indices.
+/// Relies on `SearchState::matches` being sorted by `(row, start)`.
+fn apply_search_highlights(lines: &mut [Line<'static>], app: &App, scroll: usize) {
     let search = app.active_search();
-    if search.query.is_none() || search.matches.is_empty() {
+    if search.query.is_none() || search.matches.is_empty() || lines.is_empty() {
+        return;
+    }
+    let visible_end = scroll + lines.len();
+    let lo = search.matches.partition_point(|m| m.row < scroll);
+    let hi = search.matches.partition_point(|m| m.row < visible_end);
+    if lo == hi {
         return;
     }
     let mut by_row: HashMap<usize, Vec<(usize, usize, Style)>> = HashMap::new();
-    for (idx, m) in search.matches.iter().enumerate() {
+    for idx in lo..hi {
+        let m = &search.matches[idx];
         let style = if Some(idx) == search.current {
             CURRENT_MATCH_STYLE
         } else {
             MATCH_STYLE
         };
         by_row
-            .entry(m.row)
+            .entry(m.row - scroll)
             .or_default()
             .push((m.start, m.end, style));
     }
