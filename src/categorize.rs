@@ -142,6 +142,8 @@ fn header_token_re() -> &'static Regex {
               | \d{{4}}-\d{{2}}-\d{{2}}(?:[T\- ]\d{{2}}:\d{{2}}:\d{{2}}(?:\.\d+)?(?:Z|[+\-]\d{{2}}:?\d{{2}})?)?
               | \d{{8}}[T\- ]\d{{2}}:\d{{2}}:\d{{2}}(?:\.\d+)?(?:Z|[+\-]\d{{2}}:?\d{{2}})?
               | \d{{2}}:\d{{2}}:\d{{2}}(?:\.\d+)?
+              | \d{{2}}/\D{{3}}/\d{{2}}\d{{2}}?
+              | [+\-]\d{{2}}:?\d{{2}}
               | (?:{levels})\b
             )"
         );
@@ -237,6 +239,15 @@ mod tests {
     }
 
     #[test]
+    fn dd_slash_month_slash_year_time_extends_header() {
+        let cats = extract(
+            "01/Jan/2016:03:45:49 +0100 DEBUG [Strategy/ETHUSDC] \
+             Rejecting pending position 62 while at px 2610.95",
+        );
+        assert_eq!(cats, vec!["Strategy/ETHUSDC".to_string()]);
+    }
+
+    #[test]
     fn dash_separated_categories_extend_header() {
         let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main - Cargo Profile: debug");
         assert_eq!(cats, vec!["Main".to_string()]);
@@ -259,4 +270,13 @@ mod tests {
         let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main-Process - payload");
         assert_eq!(cats, vec!["Main-Process".to_string()]);
     }
+
+    // NOTE The following test case would not be supported right now, as the categories appear as
+    // "free" text without any delimiter. The fact that there is a timestamp afterwards might be
+    // too brittle to rely on.
+    // #[test]
+    // fn name_pending() {
+    //     let cats = extract("127.0.0.1 - JOHN DOE [01/Jan/2016:03:45:49 +0100]");
+    //     assert_eq!(cats, vec!["127.0.0.1 - JOHN DOE".to_string()]);
+    // }
 }
