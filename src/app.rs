@@ -226,8 +226,11 @@ impl App {
                 // Pane rows for "all" are 1:1 with rendered rows.
                 adjust_search_after_drop(&mut self.main_search, drop);
 
+                // `cat.indices` and `pending.rows` are strictly increasing,
+                // so the count of entries below `drop` is the partition
+                // point — O(log n) instead of the prior linear scan.
                 for cat in &mut self.categories {
-                    let dropped_here = cat.indices.iter().take_while(|&&i| i < drop).count();
+                    let dropped_here = cat.indices.partition_point(|&i| i < drop);
                     cat.indices.drain(..dropped_here);
                     for i in &mut cat.indices {
                         *i -= drop;
@@ -236,7 +239,7 @@ impl App {
                     adjust_search_after_drop(&mut cat.search, dropped_here);
                 }
                 for p in self.pending.values_mut() {
-                    let dropped_here = p.rows.iter().take_while(|&&i| i < drop).count();
+                    let dropped_here = p.rows.partition_point(|&i| i < drop);
                     p.rows.drain(..dropped_here);
                     for i in &mut p.rows {
                         *i -= drop;
