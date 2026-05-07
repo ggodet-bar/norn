@@ -21,14 +21,19 @@ const PENDING_EVICTION_AGE: usize = 200;
 
 pub struct ViewState {
     pub scroll: usize,
+    /// Defines whether the view should stick to the bottom of the buffer or move freely. On init,
+    /// `false` will display the top of the buffer, `true` the bottom.
     pub follow: bool,
+    /// When displaying a file without the `follow` option, hide the FOLLOW/PAUSE text.
+    pub display_follow: bool,
 }
 
 impl ViewState {
-    fn new() -> Self {
+    fn new(display_follow: bool) -> Self {
         Self {
             scroll: 0,
-            follow: true,
+            follow: display_follow,
+            display_follow,
         }
     }
 
@@ -121,11 +126,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(max_lines: Option<usize>) -> Self {
+    pub fn new(max_lines: Option<usize>, display_follow: bool) -> Self {
         Self {
             rendered: Vec::new(),
             line_numbers: Vec::new(),
-            main: ViewState::new(),
+            main: ViewState::new(display_follow),
             main_search: SearchState::default(),
             max_lines,
             categories: Vec::new(),
@@ -195,7 +200,7 @@ impl App {
                 self.categories.push(Category {
                     name: cat_name,
                     indices: pending.rows,
-                    view: ViewState::new(),
+                    view: ViewState::new(self.main.display_follow),
                     search: SearchState::default(),
                 });
             }
@@ -561,7 +566,7 @@ mod tests {
 
     #[test]
     fn literal_search_finds_matches_in_main() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["foo bar", "no match", "another foo"]);
         let n = app.commit_search("foo", false).unwrap();
         assert_eq!(n, 2);
@@ -573,7 +578,7 @@ mod tests {
 
     #[test]
     fn regex_search_finds_matches() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["abc 123", "xyz 7", "no digits here"]);
         let n = app.commit_search(r"\d+", true).unwrap();
         assert_eq!(n, 2);
@@ -581,7 +586,7 @@ mod tests {
 
     #[test]
     fn literal_search_treats_metacharacters_literally() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["a.b", "axb"]);
         // In literal mode, `.` matches a dot, not any char.
         assert_eq!(app.commit_search(".", false).unwrap(), 1);
@@ -589,14 +594,14 @@ mod tests {
 
     #[test]
     fn invalid_regex_returns_error() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["foo"]);
         assert!(app.commit_search("(", true).is_err());
     }
 
     #[test]
     fn empty_query_clears_search() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["foo"]);
         app.commit_search("foo", false).unwrap();
         assert!(app.main_search.query.is_some());
@@ -607,7 +612,7 @@ mod tests {
 
     #[test]
     fn search_next_and_prev_cycle() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["a", "a", "a"]);
         app.commit_search("a", false).unwrap();
         assert_eq!(app.main_search.current, Some(0));
@@ -619,7 +624,7 @@ mod tests {
 
     #[test]
     fn push_extends_active_search_matches() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["foo"]);
         app.commit_search("foo", false).unwrap();
         assert_eq!(app.main_search.matches.len(), 1);
@@ -632,7 +637,7 @@ mod tests {
 
     #[test]
     fn trim_drops_and_shifts_main_matches() {
-        let mut app = App::new(Some(2));
+        let mut app = App::new(Some(2), true);
         push_lines(&mut app, &["foo", "foo", "foo"]);
         app.commit_search("foo", false).unwrap();
         assert_eq!(app.rendered.len(), 2);
@@ -646,7 +651,7 @@ mod tests {
 
     #[test]
     fn trim_keeps_current_when_above_drop_cutoff() {
-        let mut app = App::new(Some(3));
+        let mut app = App::new(Some(3), true);
         push_lines(&mut app, &["foo", "foo", "foo"]);
         app.commit_search("foo", false).unwrap();
         app.search_next();
@@ -659,7 +664,7 @@ mod tests {
 
     #[test]
     fn trim_resets_current_when_it_was_dropped() {
-        let mut app = App::new(Some(2));
+        let mut app = App::new(Some(2), true);
         push_lines(&mut app, &["foo", "foo"]);
         app.commit_search("foo", false).unwrap();
         // current = Some(0); push enough to drop the first match.
@@ -672,7 +677,7 @@ mod tests {
 
     #[test]
     fn ignore_active_category_drops_pane_and_blocks_reappearance() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         // Burst-promote "[db]" so we have a category pane to ignore.
         push_lines(&mut app, &["[db] a", "[db] b", "[db] c"]);
         assert_eq!(app.categories.len(), 1);
@@ -691,7 +696,7 @@ mod tests {
 
     #[test]
     fn ignore_active_category_lands_on_left_neighbor() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         // Two distinct burst-promoted categories.
         push_lines(
             &mut app,
@@ -710,7 +715,7 @@ mod tests {
 
     #[test]
     fn ignore_on_all_pane_is_noop() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["foo"]);
         app.ignore_active_category();
         assert_eq!(app.selected, 0);
@@ -718,14 +723,14 @@ mod tests {
 
     #[test]
     fn goto_returns_none_on_empty_pane() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         assert_eq!(app.goto_input_line(1), None);
         assert_eq!(app.goto_highlight, None);
     }
 
     #[test]
     fn goto_exact_match_in_all_pane() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["one", "two", "three"]);
         assert_eq!(app.goto_input_line(2), Some(1));
         assert_eq!(app.goto_highlight, Some(2));
@@ -735,14 +740,14 @@ mod tests {
 
     #[test]
     fn goto_clamps_above_max_in_all_pane() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["one", "two", "three"]);
         assert_eq!(app.goto_input_line(99), Some(2));
     }
 
     #[test]
     fn goto_clamps_below_min_in_all_pane() {
-        let mut app = App::new(Some(2));
+        let mut app = App::new(Some(2), true);
         push_lines(&mut app, &["one", "two", "three", "four"]);
         // Oldest survivor is line 3 (input_seq starts at 1).
         assert_eq!(app.goto_input_line(1), Some(0));
@@ -750,7 +755,7 @@ mod tests {
 
     #[test]
     fn goto_in_category_pane_picks_closest() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         // Burst-promote `[db]`, then push lines that bypass it so the
         // category's input line numbers skip values.
         push_lines(&mut app, &["[db] 1", "[db] 2", "[db] 3"]);
@@ -771,7 +776,7 @@ mod tests {
 
     #[test]
     fn no_matches_yields_none_current() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, true);
         push_lines(&mut app, &["abc", "def"]);
         assert_eq!(app.commit_search("zzz", false).unwrap(), 0);
         assert_eq!(app.main_search.current, None);

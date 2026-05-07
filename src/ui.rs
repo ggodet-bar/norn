@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
+    Frame,
 };
 
-use crate::InputMode;
 use crate::app::App;
+use crate::InputMode;
 
 const MATCH_STYLE: Style = Style::new().bg(Color::Yellow).fg(Color::Black);
 const CURRENT_MATCH_STYLE: Style = Style::new()
@@ -409,8 +409,16 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         (cat.name.as_str(), cat.indices.len(), &cat.view)
     };
     let mut s = format!(
-        " {label}: {total} lines · {} ",
-        if view.follow { "FOLLOW" } else { "PAUSED" }
+        " {label}: {total} lines {}",
+        if view.display_follow {
+            if view.follow {
+                "· FOLLOW "
+            } else {
+                "· PAUSED "
+            }
+        } else {
+            ""
+        }
     );
     let search = app.active_search();
     if let Some(q) = &search.query {

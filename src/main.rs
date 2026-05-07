@@ -14,12 +14,12 @@ use anyhow::anyhow;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::App;
-use crate::capture::{LogLine, pipe_into, tail_into};
+use crate::capture::{pipe_into, tail_into, LogLine};
 
 const DEFAULT_MAX_LINES: usize = 10_000;
 
@@ -38,15 +38,17 @@ fn main() -> anyhow::Result<()> {
     // A file path overrides stdin; in that mode the buffer is unbounded
     // because the file is finite and the user expects to scroll all of it.
     let file_mode = args.path.is_some();
-    let max_lines = match &args.path {
+    let (max_lines, display_follow) = match &args.path {
         Some(path) => {
             let file = File::open(path)?;
-            if args.follow {
+            let display_follow = if args.follow {
                 tail_into(file, tx);
+                true
             } else {
                 pipe_into(file, tx);
-            }
-            None
+                false
+            };
+            (None, display_follow)
         }
         None => {
             if io::stdin().is_terminal() {
@@ -54,7 +56,7 @@ fn main() -> anyhow::Result<()> {
                 std::process::exit(2);
             }
             pipe_into(io::stdin(), tx);
-            args.max_lines
+            (args.max_lines, true)
         }
     };
 
@@ -64,7 +66,7 @@ fn main() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(max_lines);
+    let mut app = App::new(max_lines, display_follow);
     app.show_line_numbers = file_mode && !args.no_line_numbers;
     let res = run(&mut terminal, &mut app, &rx, file_mode);
 
@@ -122,7 +124,9 @@ fn parse_args() -> anyhow::Result<Args> {
         }
     }
     if follow && path.is_none() {
-        return Err(anyhow!("--follow/-f requires a file path; cannot tail stdin"));
+        return Err(anyhow!(
+            "--follow/-f requires a file path; cannot tail stdin"
+        ));
     }
     Ok(Args {
         max_lines,
