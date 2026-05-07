@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -234,7 +234,10 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     // and goto highlight can look up input line numbers.
     let (mut lines, render_rows): (Vec<Line<'static>>, Vec<usize>) = if app.selected == 0 {
         (
-            app.rendered[scroll..visible_end].to_vec(),
+            app.rendered
+                .range(scroll..visible_end)
+                .cloned()
+                .collect(),
             (scroll..visible_end).collect(),
         )
     } else {
@@ -259,7 +262,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
         // just the visible window) so the gutter width stays stable as
         // the user scrolls.
         let max_line_no = if app.selected == 0 {
-            app.line_numbers.last().copied().unwrap_or(0)
+            app.line_numbers.back().copied().unwrap_or(0)
         } else {
             app.categories[app.selected - 1]
                 .indices
@@ -287,7 +290,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
 fn prepend_line_number_gutter(
     lines: &mut [Line<'static>],
     render_rows: &[usize],
-    numbers: &[usize],
+    numbers: &VecDeque<usize>,
     goto_mask: &[bool],
     max_line_no: usize,
 ) {

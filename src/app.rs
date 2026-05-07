@@ -100,10 +100,13 @@ struct PendingCategory {
 }
 
 pub struct App {
-    pub rendered: Vec<Line<'static>>,
+    /// `VecDeque` rather than `Vec` so the front-trim at `max_lines`
+    /// capacity is O(1) (head-pointer advance) instead of an O(N)
+    /// memmove of the entire buffer on every overflowing push.
+    pub rendered: VecDeque<Line<'static>>,
     /// Parallel to `rendered`: each entry is the input line number of the
     /// row. Numbers come from `input_seq` and so survive trimming.
-    pub line_numbers: Vec<usize>,
+    pub line_numbers: VecDeque<usize>,
     pub main: ViewState,
     pub main_search: SearchState,
     pub max_lines: Option<usize>,
@@ -128,8 +131,8 @@ pub struct App {
 impl App {
     pub fn new(max_lines: Option<usize>, display_follow: bool) -> Self {
         Self {
-            rendered: Vec::new(),
-            line_numbers: Vec::new(),
+            rendered: VecDeque::new(),
+            line_numbers: VecDeque::new(),
             main: ViewState::new(display_follow),
             main_search: SearchState::default(),
             max_lines,
