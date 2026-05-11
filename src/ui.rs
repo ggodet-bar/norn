@@ -254,7 +254,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
             .collect(),
         None => Vec::new(),
     };
-    if app.show_line_numbers {
+    let mut gutter_lines: Vec<Line<'static>> = if app.show_line_numbers {
         // Use the largest input line number currently in the pane (not
         // just the visible window) so the gutter width stays stable as
         // the user scrolls.
@@ -267,40 +267,66 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
                 .and_then(|&i| app.line_numbers.get(i).copied())
                 .unwrap_or(0)
         };
-        prepend_line_number_gutter(
-            &mut lines,
-            &render_rows,
-            &app.line_numbers,
-            &goto_mask,
-            max_line_no,
-        );
-    }
+        build_line_number_gutter(&render_rows, &app.line_numbers, &goto_mask, max_line_no)
+    } else {
+        Vec::new()
+    };
     apply_goto_highlight(&mut lines, &goto_mask);
+    apply_goto_highlight(&mut gutter_lines, &goto_mask);
 
-    f.render_widget(Paragraph::new(lines).block(block), area);
+    // Sticky gutter sits in its own column so horizontal scroll only
+    // shifts the body. Width comes from the first gutter row — all rows
+    // are built to the same width.
+    let gutter_width = gutter_lines.first().map(line_width).unwrap_or(0) as u16;
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(gutter_width), Constraint::Min(0)])
+        .split(inner);
+    let body_area = chunks[1];
+
+    // Clamp horizontal scroll to the longest visible line — past the end
+    // of every line there's nothing left to reveal.
+    let max_body_width = lines.iter().map(line_width).max().unwrap_or(0);
+    let max_hscroll = max_body_width.saturating_sub(body_area.width as usize);
+    let hscroll = {
+        let (view, _) = app.active_view_mut();
+        view.hscroll = view.hscroll.min(max_hscroll);
+        view.hscroll
+    } as u16;
+
+    f.render_widget(&block, area);
+    if !gutter_lines.is_empty() {
+        f.render_widget(Paragraph::new(gutter_lines), chunks[0]);
+    }
+    f.render_widget(Paragraph::new(lines).scroll((0, hscroll)), body_area);
 }
 
-/// Prepend a right-aligned line-number gutter to each pane line. Width is
-/// sized to the largest visible number so columns stay aligned. Repeated
-/// numbers (multiple rendered rows from one input line) only print on the
-/// first occurrence; later rows show a blank gutter.
-fn prepend_line_number_gutter(
-    lines: &mut [Line<'static>],
+fn line_width(line: &Line<'static>) -> usize {
+    line.spans.iter().map(|s| s.content.chars().count()).sum()
+}
+
+/// Build a sticky right-aligned line-number gutter as one `Line` per visible
+/// pane row. Width is sized to the largest pane line number so columns stay
+/// aligned as the user scrolls. Repeated numbers (multiple rendered rows from
+/// one input line) only print on the first occurrence; later rows show a
+/// blank gutter.
+fn build_line_number_gutter(
     render_rows: &[usize],
     numbers: &VecDeque<usize>,
     goto_mask: &[bool],
     max_line_no: usize,
-) {
-    if lines.is_empty() {
-        return;
+) -> Vec<Line<'static>> {
+    if render_rows.is_empty() {
+        return Vec::new();
     }
     let width = max_line_no.to_string().len().max(1);
     let normal = Style::default().fg(Color::DarkGray);
     let highlight = Style::default()
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
+    let mut out = Vec::with_capacity(render_rows.len());
     let mut prev: Option<usize> = None;
-    for (i, (line, &r)) in lines.iter_mut().zip(render_rows.iter()).enumerate() {
+    for (i, &r) in render_rows.iter().enumerate() {
         let n = numbers.get(r).copied();
         let label = match n {
             Some(num) if Some(num) != prev => format!("{:>width$} │ ", num, width = width),
@@ -312,11 +338,9 @@ fn prepend_line_number_gutter(
         } else {
             normal
         };
-        let mut spans = Vec::with_capacity(line.spans.len() + 1);
-        spans.push(Span::styled(label, style));
-        spans.append(&mut line.spans);
-        *line = Line::from(spans);
+        out.push(Line::from(Span::styled(label, style)));
     }
+    out
 }
 
 /// Patch a discrete background colour onto every span of a row whose
@@ -462,7 +486,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         let prefix = if q.is_regex { "re/" } else { "/" };
         s.push_str(&format!("· {prefix}{} {pos}/{total} ", q.raw));
     }
-    s.push_str("· q quit · / search · : goto · n/N next/prev · ↑/↓ PgUp/PgDn scroll · g/G top/bottom · End follow · Tab/0-9 panes · Ctrl-X hide ");
+    s.push_str("· q quit · / search · : goto · n/N next/prev · hjkl/↑↓ PgUp/PgDn scroll · g/G top/bottom · End follow · Tab/0-9 panes · Ctrl-X hide ");
     f.render_widget(
         Paragraph::new(s).style(Style::default().fg(Color::Black).bg(Color::Cyan)),
         area,

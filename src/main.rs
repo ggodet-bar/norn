@@ -285,6 +285,8 @@ fn handle_scroll_key(key: &KeyEvent, app: &mut App, viewport: usize) -> bool {
     match key.code {
         KeyCode::Up => app.scroll_up(1),
         KeyCode::Down => app.scroll_down(1, viewport),
+        KeyCode::Left => app.scroll_left(1),
+        KeyCode::Right => app.scroll_right(1),
         KeyCode::PageUp => app.scroll_up(viewport.max(1)),
         KeyCode::PageDown => app.scroll_down(viewport.max(1), viewport),
         KeyCode::Home => app.scroll_top(),
@@ -418,6 +420,22 @@ fn handle_normal_key(key: KeyEvent, app: &mut App, viewport: usize) -> Option<In
         }
         (KeyCode::Char('G'), _) => {
             app.scroll_bottom();
+            Some(InputMode::Normal)
+        }
+        (KeyCode::Char('j'), m) if !m.contains(KeyModifiers::CONTROL) => {
+            app.scroll_down(1, viewport);
+            Some(InputMode::Normal)
+        }
+        (KeyCode::Char('k'), m) if !m.contains(KeyModifiers::CONTROL) => {
+            app.scroll_up(1);
+            Some(InputMode::Normal)
+        }
+        (KeyCode::Char('h'), m) if !m.contains(KeyModifiers::CONTROL) => {
+            app.scroll_left(1);
+            Some(InputMode::Normal)
+        }
+        (KeyCode::Char('l'), m) if !m.contains(KeyModifiers::CONTROL) => {
+            app.scroll_right(1);
             Some(InputMode::Normal)
         }
         (KeyCode::Char('n'), m) if !m.contains(KeyModifiers::CONTROL) => {

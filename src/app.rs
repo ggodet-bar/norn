@@ -21,6 +21,10 @@ const PENDING_EVICTION_AGE: usize = 200;
 
 pub struct ViewState {
     pub scroll: usize,
+    /// Horizontal column offset of the body relative to its rendered column 0.
+    /// Clamped at draw time to the longest visible line's width so the user
+    /// can't scroll past the content.
+    pub hscroll: usize,
     /// Defines whether the view should stick to the bottom of the buffer or move freely. On init,
     /// `false` will display the top of the buffer, `true` the bottom.
     pub follow: bool,
@@ -32,6 +36,7 @@ impl ViewState {
     fn new(display_follow: bool) -> Self {
         Self {
             scroll: 0,
+            hscroll: 0,
             follow: display_follow,
             display_follow,
         }
@@ -48,6 +53,14 @@ impl ViewState {
         if self.scroll >= max {
             self.follow = true;
         }
+    }
+
+    fn scroll_left(&mut self, n: usize) {
+        self.hscroll = self.hscroll.saturating_sub(n);
+    }
+
+    fn scroll_right(&mut self, n: usize) {
+        self.hscroll = self.hscroll.saturating_add(n);
     }
 }
 
@@ -268,6 +281,16 @@ impl App {
     pub fn scroll_down(&mut self, n: usize, viewport: usize) {
         let (v, total) = self.active_view_mut();
         v.scroll_down(n, total, viewport);
+    }
+
+    pub fn scroll_left(&mut self, n: usize) {
+        let (v, _) = self.active_view_mut();
+        v.scroll_left(n);
+    }
+
+    pub fn scroll_right(&mut self, n: usize) {
+        let (v, _) = self.active_view_mut();
+        v.scroll_right(n);
     }
 
     pub fn scroll_top(&mut self) {
