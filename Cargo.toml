@@ -2,6 +2,10 @@
 name = "splog"
 version = "0.1.0"
 edition = "2024"
+license-file = "LICENSE.md"
+description = "A TUI log viewer with automatic category filtering"
+homepage = "https://github.com/ggodet-bar/splog"
+repository = "https://github.com/ggodet-bar/splog"
 
 [dependencies]
 ratatui = "0.30"
