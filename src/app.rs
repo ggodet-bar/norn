@@ -70,6 +70,11 @@ pub struct Category {
     pub indices: Vec<usize>,
     pub view: ViewState,
     pub search: SearchState,
+    /// When `Some`, every newly-pushed row whose text matches this regex is
+    /// appended to `indices`. Set only when the user explicitly promotes a
+    /// search term to a category from the search bar; tag-extracted
+    /// categories leave this as `None` and rely on `categorize::extract`.
+    pub match_regex: Option<Regex>,
 }
 
 /// Compiled query backing a `SearchState`. Literal queries are stored after
@@ -218,7 +223,27 @@ impl App {
                     indices: pending.rows,
                     view: ViewState::new(self.main.display_follow),
                     search: SearchState::default(),
+                    match_regex: None,
                 });
+            }
+        }
+
+        // Append matching rows to any user-promoted (regex-backed) category
+        // so the pane keeps growing with the live stream after promotion.
+        for cat_idx in 0..self.categories.len() {
+            let Some(re) = self.categories[cat_idx].match_regex.clone() else {
+                continue;
+            };
+            let mut added = 0;
+            for row in start..end {
+                let plain = plain_text(&self.rendered[row]);
+                if re.is_match(&plain) {
+                    self.categories[cat_idx].indices.push(row);
+                    added += 1;
+                }
+            }
+            if added > 0 {
+                self.scan_new_category_rows(cat_idx, added);
             }
         }
 
@@ -386,6 +411,56 @@ impl App {
 
     pub fn clear_search(&mut self) {
         *self.active_search_mut() = SearchState::default();
+    }
+
+    /// Turn `raw` into a new category pane: scan existing rendered rows for
+    /// matches, then keep the regex so future pushes append to the pane.
+    /// If a category with the same name already exists, just switches to it.
+    /// Empty input is a no-op. Selection moves to the resulting pane on
+    /// success. Returns `Ok(false)` only when the input was empty.
+    pub fn promote_search_to_category(
+        &mut self,
+        raw: &str,
+        is_regex: bool,
+    ) -> Result<bool, regex::Error> {
+        if raw.is_empty() {
+            return Ok(false);
+        }
+        let name = raw.to_string();
+        if let Some(&idx) = self.category_index.get(&name) {
+            self.selected = idx + 1;
+            return Ok(true);
+        }
+        let pattern = if is_regex {
+            raw.to_string()
+        } else {
+            regex::escape(raw)
+        };
+        let regex = Regex::new(&pattern)?;
+
+        // Explicit promotion overrides a prior hide and any pending state
+        // tracked under the same name.
+        self.pending.remove(&name);
+        self.ignored.remove(&name);
+
+        let mut indices = Vec::new();
+        for (row, line) in self.rendered.iter().enumerate() {
+            if regex.is_match(&plain_text(line)) {
+                indices.push(row);
+            }
+        }
+
+        let idx = self.categories.len();
+        self.category_index.insert(name.clone(), idx);
+        self.categories.push(Category {
+            name,
+            indices,
+            view: ViewState::new(self.main.display_follow),
+            search: SearchState::default(),
+            match_regex: Some(regex),
+        });
+        self.selected = idx + 1;
+        Ok(true)
     }
 
     /// Advance to the next match, wrapping. Returns the pane-local row of
@@ -801,6 +876,85 @@ mod tests {
         // Exact match.
         assert_eq!(app.goto_input_line(2), Some(1));
         assert_eq!(app.goto_highlight, Some(2));
+    }
+
+    #[test]
+    fn promote_search_creates_category_with_existing_matches() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["alpha one", "beta two", "alpha three"]);
+        assert!(app.categories.is_empty());
+        assert!(app.promote_search_to_category("alpha", false).unwrap());
+        assert_eq!(app.categories.len(), 1);
+        assert_eq!(app.categories[0].name, "alpha");
+        assert_eq!(app.categories[0].indices, vec![0, 2]);
+        // Selection moved to the new pane.
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn promote_search_captures_future_matches() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["alpha one"]);
+        app.promote_search_to_category("alpha", false).unwrap();
+        assert_eq!(app.categories[0].indices, vec![0]);
+        push_lines(&mut app, &["beta", "alpha two", "gamma alpha"]);
+        assert_eq!(app.categories[0].indices, vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn promote_search_empty_input_is_noop() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["alpha"]);
+        assert!(!app.promote_search_to_category("", false).unwrap());
+        assert!(app.categories.is_empty());
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn promote_search_existing_name_just_switches() {
+        let mut app = App::new(None, true);
+        // Burst-promote `[db]` via the tag path.
+        push_lines(&mut app, &["[db] 1", "[db] 2", "[db] 3"]);
+        assert_eq!(app.categories.len(), 1);
+        let name = app.categories[0].name.clone();
+        let before = app.categories[0].indices.clone();
+        app.selected = 0;
+        assert!(app.promote_search_to_category(&name, false).unwrap());
+        assert_eq!(app.categories.len(), 1);
+        assert_eq!(app.categories[0].indices, before);
+        // Switched to that pane.
+        assert_eq!(app.selected, 1);
+        // Did not retroactively pin a regex on the tag-extracted pane.
+        assert!(app.categories[0].match_regex.is_none());
+    }
+
+    #[test]
+    fn promote_search_regex_mode() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["err 42", "ok", "err 7"]);
+        assert!(app.promote_search_to_category(r"err \d+", true).unwrap());
+        assert_eq!(app.categories[0].indices, vec![0, 2]);
+    }
+
+    #[test]
+    fn promote_search_invalid_regex_errors() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["x"]);
+        assert!(app.promote_search_to_category("(", true).is_err());
+        assert!(app.categories.is_empty());
+    }
+
+    #[test]
+    fn promote_search_overrides_ignored_name() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["[db] 1", "[db] 2", "[db] 3"]);
+        let name = app.categories[0].name.clone();
+        app.selected = 1;
+        app.ignore_active_category();
+        assert!(app.categories.is_empty());
+        // Explicit promotion bypasses the ignore-list and re-creates the pane.
+        assert!(app.promote_search_to_category(&name, false).unwrap());
+        assert_eq!(app.categories.len(), 1);
     }
 
     #[test]

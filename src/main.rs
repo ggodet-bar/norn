@@ -454,6 +454,17 @@ fn handle_normal_key(key: KeyEvent, app: &mut App, viewport: usize) -> Option<In
             app.ignore_active_category();
             Some(InputMode::Normal)
         }
+        // Promote the active search to its own category pane. The pane is
+        // backed by the search regex so future matching pushes flow in.
+        // No-op when no search is active.
+        (KeyCode::Char('c'), m) if !m.contains(KeyModifiers::CONTROL) => {
+            if let Some(q) = app.active_search().query.as_ref() {
+                let raw = q.raw.clone();
+                let is_regex = q.is_regex;
+                let _ = app.promote_search_to_category(&raw, is_regex);
+            }
+            Some(InputMode::Normal)
+        }
         (KeyCode::Tab, _) => {
             app.next_tab();
             Some(InputMode::Normal)
