@@ -321,14 +321,21 @@ mod tests {
 
     #[test]
     fn fully_qualified_name_like_text_extend_header() {
-        let cats = extract("17/06/09 20:10:40 INFO spark.SecurityManager: Changing view acls to: yarn,curi");
+        let cats = extract(
+            "17/06/09 20:10:40 INFO spark.SecurityManager: Changing view acls to: yarn,curi",
+        );
         assert_eq!(cats, vec!["spark.SecurityManager".to_string()]);
     }
 
     #[test]
     fn merge_overlapping_candidates() {
-        let cats = extract("2015-07-29 19:04:29,071 - WARN  [SendWorker:188978561024:QuorumCnxManager$SendWorker@688] - Send worker leaving thread");
-        assert_eq!(cats, vec!["SendWorker:188978561024:QuorumCnxManager$SendWorker@688".to_string()]);
+        let cats = extract(
+            "2015-07-29 19:04:29,071 - WARN  [SendWorker:188978561024:QuorumCnxManager$SendWorker@688] - Send worker leaving thread",
+        );
+        assert_eq!(
+            cats,
+            vec!["SendWorker:188978561024:QuorumCnxManager$SendWorker@688".to_string()]
+        );
     }
 
     // NOTE The following test case would not be supported right now, as the categories appear as
