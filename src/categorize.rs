@@ -29,7 +29,7 @@ pub fn extract(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = HashSet::<String>::new();
 
-    for re in [bracketed_re(), parenthesized_re()] {
+    for re in [bracketed_re(), parenthesized_re(), fqn_like_re()] {
         for cap in re.captures_iter(&plain) {
             if cap.get(0).unwrap().start() >= header_end {
                 continue;
@@ -73,6 +73,11 @@ fn bracketed_re() -> &'static Regex {
 fn parenthesized_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"\(([^()]+)\)").unwrap())
+}
+
+fn fqn_like_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"([a-zA-Z](?:[a-zA-Z\.\$]|::)+[a-zA-Z]):").unwrap())
 }
 
 /// Byte offset where the line's contiguous header region ends. The walk
@@ -130,6 +135,7 @@ fn header_end_and_dash_candidates(plain: &str) -> (usize, Vec<String>) {
             glue += 1;
         }
     }
+    dbg!(&plain[i..]);
 
     if found_any {
         (last_end, dashed_candidates)
@@ -153,8 +159,9 @@ fn header_token_re() -> &'static Regex {
               | \([^()]+\)
               | \d{{4}}-\d{{2}}-\d{{2}}(?:[T\- ]\d{{2}}:\d{{2}}:\d{{2}}(?:\.\d+)?(?:Z|[+\-]\d{{2}}:?\d{{2}})?)?
               | \d{{8}}[T\- ]\d{{2}}:\d{{2}}:\d{{2}}(?:\.\d+)?(?:Z|[+\-]\d{{2}}:?\d{{2}})?
-              | \d{{2}}:\d{{2}}:\d{{2}}(?:\.\d+)?
-              | \d{{2}}/\D{{3}}/\d{{2}}\d{{2}}?
+              | \d{{2}}:\d{{2}}:\d{{2}}(?:[\.,]\d+)?
+              | \d{{2}}(?:\d{{2}})?/((?:\D{{3}})|(?:\d{{2}}))/\d{{2}}(?:\d{{2}})?
+              | [a-zA-Z](?:[a-zA-Z\.\$]|::)+[a-zA-Z\]]:
               | [+\-]\d{{2}}:?\d{{2}}
               | (?:{levels})\b
             )"
@@ -290,6 +297,12 @@ mod tests {
     fn dashed_categories_with_inner_dashes_extend_header() {
         let cats = extract("2026-05-02T09:43:45.729516 - INFO - Main-Process - payload");
         assert_eq!(cats, vec!["Main-Process".to_string()]);
+    }
+
+    #[test]
+    fn fully_qualified_name_like_text_extend_header() {
+        let cats = extract("17/06/09 20:10:40 INFO spark.SecurityManager: Changing view acls to: yarn,curi");
+        assert_eq!(cats, vec!["spark.SecurityManager".to_string()]);
     }
 
     // NOTE The following test case would not be supported right now, as the categories appear as
