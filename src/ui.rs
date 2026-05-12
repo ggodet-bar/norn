@@ -11,7 +11,10 @@ use ratatui::{
 use crate::InputMode;
 use crate::app::App;
 
-const MATCH_STYLE: Style = Style::new().bg(Color::Yellow).fg(Color::Black);
+const MATCH_STYLE: Style = Style::new()
+    .bg(Color::Gray)
+    .fg(Color::Black)
+    .add_modifier(Modifier::BOLD);
 const CURRENT_MATCH_STYLE: Style = Style::new()
     .bg(Color::LightYellow)
     .fg(Color::Black)
