@@ -568,7 +568,11 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::compute_tab_window;
+    use super::*;
+    use crate::InputMode;
+    use crate::app::App;
+    use crate::capture::LogLine;
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
     /// Build a widths vector where `widths[0]` is the "0:all" body width
     /// and the remaining entries are uniform-width category tabs.
@@ -577,6 +581,39 @@ mod tests {
         v.push(7); // " 0:all "
         v.extend(std::iter::repeat(cat_width).take(n_cats));
         v
+    }
+
+    fn push_lines(app: &mut App, lines: &[&str]) {
+        for raw in lines {
+            app.push(LogLine {
+                raw: (*raw).to_string(),
+            });
+        }
+    }
+
+    fn render(app: &mut App, mode: &InputMode, width: u16, height: u16) -> Buffer {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| super::draw(f, app, mode)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn buffer_text(buf: &Buffer) -> String {
+        let area = buf.area;
+        let mut out = String::with_capacity((area.width as usize + 1) * area.height as usize);
+        for y in 0..area.height {
+            for x in 0..area.width {
+                if let Some(cell) = buf.cell((x, y)) {
+                    out.push_str(cell.symbol());
+                }
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    fn line_text(line: &Line<'static>) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
     #[test]
@@ -644,5 +681,476 @@ mod tests {
         let (start, end, _, _) = compute_tab_window(&w, 3, 10);
         assert_eq!(end - start, 1);
         assert_eq!(start, 3);
+    }
+
+    // ---------- truncate ----------
+
+    #[test]
+    fn truncate_keeps_strings_at_or_below_limit() {
+        assert_eq!(truncate("abc", 5), "abc");
+        assert_eq!(truncate("abcde", 5), "abcde");
+    }
+
+    #[test]
+    fn truncate_replaces_overflow_with_ellipsis() {
+        assert_eq!(truncate("abcdefgh", 5), "abcd…");
+    }
+
+    #[test]
+    fn truncate_counts_unicode_chars_not_bytes() {
+        // Multi-byte glyphs must count as one each — otherwise the budget
+        // would be measured in bytes and clip multi-byte text early.
+        assert_eq!(truncate("αβγδε", 5), "αβγδε");
+        assert_eq!(truncate("αβγδεζ", 5), "αβγδ…");
+    }
+
+    // ---------- line_width / style_at ----------
+
+    #[test]
+    fn line_width_sums_char_counts_across_spans() {
+        let line = Line::from(vec![Span::raw("abc"), Span::raw(""), Span::raw("de")]);
+        assert_eq!(line_width(&line), 5);
+    }
+
+    #[test]
+    fn line_width_counts_unicode_as_chars() {
+        let line = Line::from(vec![Span::raw("héllo")]);
+        assert_eq!(line_width(&line), 5);
+    }
+
+    #[test]
+    fn style_at_returns_span_style_for_offset() {
+        let red = Style::default().fg(Color::Red);
+        let blue = Style::default().fg(Color::Blue);
+        let line = Line::from(vec![Span::styled("abc", red), Span::styled("defg", blue)]);
+        assert_eq!(style_at(&line, 0).fg, Some(Color::Red));
+        assert_eq!(style_at(&line, 2).fg, Some(Color::Red));
+        assert_eq!(style_at(&line, 3).fg, Some(Color::Blue));
+        assert_eq!(style_at(&line, 6).fg, Some(Color::Blue));
+    }
+
+    #[test]
+    fn style_at_past_end_returns_default() {
+        let line = Line::from(vec![Span::raw("abc")]);
+        assert_eq!(style_at(&line, 99), Style::default());
+    }
+
+    // ---------- tab_spans / cue_span / divider_span ----------
+
+    #[test]
+    fn tab_spans_uses_selected_style_when_selected() {
+        let spans = tab_spans("0:all", true);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, " 0:all ");
+        assert_eq!(spans[0].style.fg, Some(Color::Cyan));
+        assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn tab_spans_uses_dim_style_when_not_selected() {
+        let spans = tab_spans("1:db", false);
+        assert_eq!(spans[0].content, " 1:db ");
+        assert_eq!(spans[0].style.fg, Some(Color::DarkGray));
+        assert!(!spans[0].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn cue_span_pads_character_with_spaces() {
+        assert_eq!(cue_span("‹").content, " ‹ ");
+        assert_eq!(cue_span("›").content, " › ");
+    }
+
+    #[test]
+    fn divider_span_is_single_vertical_bar() {
+        assert_eq!(divider_span().content, "│");
+    }
+
+    // ---------- highlight_line ----------
+
+    #[test]
+    fn highlight_line_splits_single_span_at_range_boundaries() {
+        let base = Style::default().fg(Color::White);
+        let line = Line::from(vec![Span::styled("hello world", base)]);
+        let hi = Style::default().bg(Color::Yellow);
+        let out = highlight_line(&line, &[(6, 11, hi)]);
+        let texts: Vec<&str> = out.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(texts, vec!["hello ", "world"]);
+        assert_eq!(out.spans[0].style.fg, Some(Color::White));
+        assert_eq!(out.spans[0].style.bg, None);
+        assert_eq!(out.spans[1].style.fg, Some(Color::White));
+        assert_eq!(out.spans[1].style.bg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn highlight_line_supports_multiple_disjoint_ranges() {
+        let line = Line::from(vec![Span::raw("aaaa bbbb cccc")]);
+        let hi = Style::default().bg(Color::Yellow);
+        let out = highlight_line(&line, &[(0, 4, hi), (10, 14, hi)]);
+        let parts: Vec<(String, Option<Color>)> = out
+            .spans
+            .iter()
+            .map(|s| (s.content.to_string(), s.style.bg))
+            .collect();
+        assert_eq!(
+            parts,
+            vec![
+                ("aaaa".into(), Some(Color::Yellow)),
+                (" bbbb ".into(), None),
+                ("cccc".into(), Some(Color::Yellow)),
+            ]
+        );
+    }
+
+    #[test]
+    fn highlight_line_preserves_existing_span_breaks() {
+        let red = Style::default().fg(Color::Red);
+        let blue = Style::default().fg(Color::Blue);
+        let line = Line::from(vec![Span::styled("abc", red), Span::styled("def", blue)]);
+        let hi = Style::default().bg(Color::Yellow);
+        let out = highlight_line(&line, &[(1, 5, hi)]);
+        // Boundaries at 0, 1, 3, 5, 6 → 4 output spans.
+        assert_eq!(out.spans.len(), 4);
+        assert_eq!(out.spans[0].content, "a");
+        assert_eq!(out.spans[1].content, "bc");
+        assert_eq!(out.spans[2].content, "de");
+        assert_eq!(out.spans[3].content, "f");
+        assert_eq!(out.spans[0].style.bg, None);
+        assert_eq!(out.spans[0].style.fg, Some(Color::Red));
+        assert_eq!(out.spans[1].style.bg, Some(Color::Yellow));
+        assert_eq!(out.spans[1].style.fg, Some(Color::Red));
+        assert_eq!(out.spans[2].style.bg, Some(Color::Yellow));
+        assert_eq!(out.spans[2].style.fg, Some(Color::Blue));
+        assert_eq!(out.spans[3].style.bg, None);
+        assert_eq!(out.spans[3].style.fg, Some(Color::Blue));
+    }
+
+    // ---------- build_line_number_gutter ----------
+
+    #[test]
+    fn build_line_number_gutter_empty_returns_empty() {
+        let out = build_line_number_gutter(&[], &VecDeque::new(), &[], 0);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn build_line_number_gutter_blanks_consecutive_repeats() {
+        // Two rendered rows from input line 1, then one from line 2.
+        let numbers: VecDeque<usize> = vec![1, 1, 2].into();
+        let render_rows = vec![0, 1, 2];
+        let out = build_line_number_gutter(&render_rows, &numbers, &[], 2);
+        let texts: Vec<String> = out.iter().map(line_text).collect();
+        assert_eq!(texts, vec!["1 │ ", "  │ ", "2 │ "]);
+    }
+
+    #[test]
+    fn build_line_number_gutter_sizes_width_from_max_line_no() {
+        // max_line_no determines width, not the visible numbers.
+        let numbers: VecDeque<usize> = vec![1].into();
+        let out = build_line_number_gutter(&[0], &numbers, &[], 1000);
+        assert_eq!(line_text(&out[0]), "   1 │ ");
+    }
+
+    #[test]
+    fn build_line_number_gutter_highlights_goto_rows() {
+        let numbers: VecDeque<usize> = vec![1, 2].into();
+        let mask = vec![false, true];
+        let out = build_line_number_gutter(&[0, 1], &numbers, &mask, 2);
+        assert_eq!(out[0].spans[0].style.fg, Some(Color::DarkGray));
+        assert_eq!(out[1].spans[0].style.fg, Some(Color::Yellow));
+        assert!(out[1].spans[0].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    // ---------- apply_goto_highlight ----------
+
+    #[test]
+    fn apply_goto_highlight_empty_mask_is_noop() {
+        let mut lines = vec![Line::from(Span::raw("abc"))];
+        apply_goto_highlight(&mut lines, &[]);
+        assert_eq!(lines[0].spans[0].style.bg, None);
+    }
+
+    #[test]
+    fn apply_goto_highlight_sets_bg_on_masked_rows_only() {
+        let mut lines = vec![Line::from(Span::raw("a")), Line::from(Span::raw("b"))];
+        apply_goto_highlight(&mut lines, &[false, true]);
+        assert_eq!(lines[0].spans[0].style.bg, None);
+        assert_eq!(lines[1].spans[0].style.bg, Some(Color::DarkGray));
+        assert_eq!(lines[1].style.bg, Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn apply_goto_highlight_does_not_override_existing_bg() {
+        // patch() leaves already-set fields alone, so a span with its own
+        // background (e.g. a search match) keeps that colour.
+        let red_bg = Style::default().bg(Color::Red);
+        let mut lines = vec![Line::from(Span::styled("a", red_bg))];
+        apply_goto_highlight(&mut lines, &[true]);
+        assert_eq!(lines[0].spans[0].style.bg, Some(Color::Red));
+    }
+
+    // ---------- apply_search_highlights ----------
+
+    #[test]
+    fn apply_search_highlights_no_query_is_noop() {
+        let app = App::new(None, true);
+        let mut lines = vec![Line::from(Span::raw("hello"))];
+        apply_search_highlights(&mut lines, &app, 0);
+        assert_eq!(lines[0].spans.len(), 1);
+        assert_eq!(lines[0].spans[0].content, "hello");
+    }
+
+    #[test]
+    fn apply_search_highlights_styles_current_match_with_light_yellow() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["hello world"]);
+        app.commit_search("world", false).unwrap();
+        let mut lines: Vec<Line<'static>> = app.rendered.iter().cloned().collect();
+        apply_search_highlights(&mut lines, &app, 0);
+        let hit = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.as_ref() == "world")
+            .expect("match text should appear as its own span");
+        assert_eq!(hit.style.bg, Some(Color::LightYellow));
+    }
+
+    #[test]
+    fn apply_search_highlights_styles_non_current_with_gray() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["foo", "foo", "foo"]);
+        app.commit_search("foo", false).unwrap();
+        // Visible window covers rows 1..3 — neither is the current match
+        // (row 0 is current), so both should get the dim Gray style.
+        let mut lines: Vec<Line<'static>> = app.rendered.range(1..3).cloned().collect();
+        apply_search_highlights(&mut lines, &app, 1);
+        for line in &lines {
+            let hit = line
+                .spans
+                .iter()
+                .find(|s| s.content.as_ref() == "foo")
+                .expect("match span should be present");
+            assert_eq!(hit.style.bg, Some(Color::Gray));
+        }
+    }
+
+    #[test]
+    fn apply_search_highlights_skips_matches_outside_window() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["foo", "foo", "foo"]);
+        app.commit_search("foo", false).unwrap();
+        // Pass only one line as the visible window, well past the matches.
+        let mut lines = vec![Line::from(Span::raw("unrelated"))];
+        apply_search_highlights(&mut lines, &app, 99);
+        // Nothing in this line matched the search rows → untouched.
+        assert_eq!(lines[0].spans.len(), 1);
+        assert_eq!(lines[0].spans[0].content, "unrelated");
+        assert_eq!(lines[0].spans[0].style.bg, None);
+    }
+
+    // ---------- draw (integration via TestBackend) ----------
+
+    #[test]
+    fn draw_normal_mode_shows_tab_strip_and_status_bar() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["hello"]);
+        let buf = render(&mut app, &InputMode::Normal, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(text.contains("0:all"), "tab strip missing\n{text}");
+        assert!(text.contains("all: 1 lines"), "status bar missing\n{text}");
+    }
+
+    #[test]
+    fn draw_search_mode_renders_buffer_and_help() {
+        let mut app = App::new(None, true);
+        let mode = InputMode::Search {
+            buffer: "abc".into(),
+            is_regex: false,
+            error: None,
+        };
+        let buf = render(&mut app, &mode, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(
+            text.contains("/abc"),
+            "search prefix+buffer missing\n{text}"
+        );
+        assert!(text.contains("Enter: apply"), "help hint missing\n{text}");
+    }
+
+    #[test]
+    fn draw_search_mode_in_regex_uses_re_prefix() {
+        let mut app = App::new(None, true);
+        let mode = InputMode::Search {
+            buffer: "foo".into(),
+            is_regex: true,
+            error: None,
+        };
+        let buf = render(&mut app, &mode, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(text.contains("re/foo"), "regex prefix missing\n{text}");
+    }
+
+    #[test]
+    fn draw_search_mode_shows_error_when_present() {
+        let mut app = App::new(None, true);
+        let mode = InputMode::Search {
+            buffer: "(".into(),
+            is_regex: true,
+            error: Some("bad regex".into()),
+        };
+        let buf = render(&mut app, &mode, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(text.contains("[bad regex]"), "error not shown\n{text}");
+        // Help hint should NOT appear when an error is displayed.
+        assert!(
+            !text.contains("Enter: apply"),
+            "help should be replaced by error\n{text}"
+        );
+    }
+
+    #[test]
+    fn draw_goto_mode_renders_prefix_buffer_and_help() {
+        let mut app = App::new(None, true);
+        let mode = InputMode::Goto {
+            buffer: "42".into(),
+            error: None,
+        };
+        let buf = render(&mut app, &mode, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(text.contains(":42"), "goto prefix+buffer missing\n{text}");
+        assert!(text.contains("go to line"), "help hint missing\n{text}");
+    }
+
+    #[test]
+    fn draw_goto_mode_shows_error_when_present() {
+        let mut app = App::new(None, true);
+        let mode = InputMode::Goto {
+            buffer: "abc".into(),
+            error: Some("not a number".into()),
+        };
+        let buf = render(&mut app, &mode, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(text.contains("[not a number]"), "error not shown\n{text}");
+    }
+
+    #[test]
+    fn draw_does_not_panic_on_empty_app() {
+        let mut app = App::new(None, false);
+        let _ = render(&mut app, &InputMode::Normal, 40, 8);
+    }
+
+    #[test]
+    fn draw_does_not_panic_on_very_narrow_terminal() {
+        // Narrow widths exercise the compute_tab_window fallback path and
+        // hscroll clamping — make sure rendering still completes.
+        let mut app = App::new(None, true);
+        push_lines(
+            &mut app,
+            &[
+                "[db] 1", "[db] 2", "[db] 3", "[auth] 1", "[auth] 2", "[auth] 3",
+            ],
+        );
+        let _ = render(&mut app, &InputMode::Normal, 8, 6);
+    }
+
+    #[test]
+    fn draw_renders_promoted_category_tab_label() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["[db] a", "[db] b", "[db] c"]);
+        assert_eq!(app.categories.len(), 1);
+        let name = app.categories[0].name.clone();
+        let buf = render(&mut app, &InputMode::Normal, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(
+            text.contains(&format!("1:{name}")),
+            "category tab missing\n{text}"
+        );
+    }
+
+    #[test]
+    fn draw_category_pane_uses_category_name_in_title() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["[db] a", "[db] b", "[db] c"]);
+        let name = app.categories[0].name.clone();
+        app.selected = 1;
+        let buf = render(&mut app, &InputMode::Normal, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(text.contains(&format!(" {name} ")), "title missing\n{text}");
+        assert!(
+            text.contains(&format!("{name}:")),
+            "status label missing\n{text}"
+        );
+    }
+
+    #[test]
+    fn draw_status_bar_shows_search_position_and_total() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["foo", "bar foo"]);
+        app.commit_search("foo", false).unwrap();
+        // Generous width so the status text isn't clipped.
+        let buf = render(&mut app, &InputMode::Normal, 200, 10);
+        let text = buffer_text(&buf);
+        assert!(text.contains("/foo 1/2"), "match counter missing\n{text}");
+    }
+
+    #[test]
+    fn draw_renders_line_number_gutter_when_enabled() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["one", "two", "three"]);
+        app.show_line_numbers = true;
+        let buf = render(&mut app, &InputMode::Normal, 40, 10);
+        let text = buffer_text(&buf);
+        assert!(
+            text.contains("1 │"),
+            "gutter row for line 1 missing\n{text}"
+        );
+        assert!(
+            text.contains("2 │"),
+            "gutter row for line 2 missing\n{text}"
+        );
+        assert!(
+            text.contains("3 │"),
+            "gutter row for line 3 missing\n{text}"
+        );
+    }
+
+    #[test]
+    fn draw_omits_line_number_gutter_when_disabled() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["one", "two", "three"]);
+        // show_line_numbers defaults to false.
+        let buf = render(&mut app, &InputMode::Normal, 40, 10);
+        let text = buffer_text(&buf);
+        assert!(!text.contains("1 │"), "gutter should not appear\n{text}");
+    }
+
+    #[test]
+    fn draw_follow_status_shows_follow_when_following() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["x"]);
+        let buf = render(&mut app, &InputMode::Normal, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(text.contains("FOLLOW"), "FOLLOW indicator missing\n{text}");
+    }
+
+    #[test]
+    fn draw_follow_status_shows_paused_when_not_following() {
+        let mut app = App::new(None, true);
+        push_lines(&mut app, &["x"]);
+        app.main.follow = false;
+        let buf = render(&mut app, &InputMode::Normal, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(text.contains("PAUSED"), "PAUSED indicator missing\n{text}");
+    }
+
+    #[test]
+    fn draw_omits_follow_indicator_when_display_follow_is_off() {
+        // File mode (no --follow) constructs App with display_follow = false,
+        // so neither FOLLOW nor PAUSED should appear in the status bar.
+        let mut app = App::new(None, false);
+        push_lines(&mut app, &["x"]);
+        let buf = render(&mut app, &InputMode::Normal, 80, 10);
+        let text = buffer_text(&buf);
+        assert!(!text.contains("FOLLOW"), "FOLLOW should be hidden\n{text}");
+        assert!(!text.contains("PAUSED"), "PAUSED should be hidden\n{text}");
     }
 }
