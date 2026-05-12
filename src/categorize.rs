@@ -34,18 +34,38 @@ pub fn extract(line: &str) -> Vec<String> {
             if cap.get(0).unwrap().start() >= header_end {
                 continue;
             }
-            let inner = cap.get(1).unwrap().as_str().trim();
+            let cap = cap.get(1).unwrap();
+            let inner = cap.as_str().trim();
             if accept_tag(inner) && seen.insert(inner.to_string()) {
-                out.push(inner.to_string());
+                out.push((inner.to_string(), cap.start(), cap.end()));
             }
         }
     }
-    for dashed_candidate in dashed_candidates {
+    for (dashed_candidate, start_idx, end_idx) in dashed_candidates {
         if accept_tag(&dashed_candidate) && seen.insert(dashed_candidate.clone()) {
-            out.push(dashed_candidate);
+            out.push((dashed_candidate, start_idx, end_idx));
         }
     }
-    out
+    if out.is_empty() {
+        return Vec::new();
+    }
+    // Merge overlapping candidates
+    out.sort_by(|(_, idx_a, _), (_, idx_b, _)| (*idx_a).cmp(idx_b));
+    let (mut current_tag, mut current_start_idx, mut current_end_idx) = out[0].clone();
+    let mut merged = Vec::new();
+    for (tag, start_idx, end_idx) in &out[1..] {
+        if *start_idx > current_end_idx {
+            merged.push(current_tag.clone());
+            current_tag = tag.to_owned();
+            current_start_idx = *start_idx;
+            current_end_idx = *end_idx;
+        } else if current_end_idx < *end_idx {
+            current_tag = plain[current_start_idx..*end_idx].to_owned();
+            current_end_idx = *end_idx;
+        }
+    }
+    merged.push(current_tag);
+    merged
 }
 
 fn strip_ansi(s: &str) -> Cow<'_, str> {
@@ -86,7 +106,7 @@ fn fqn_like_re() -> &'static Regex {
 /// separated by up to `MAX_GLUE` bytes of punctuation/whitespace. Returns 0
 /// when no header token sits at the start — every bracket/paren group on
 /// such lines is then treated as payload and ignored.
-fn header_end_and_dash_candidates(plain: &str) -> (usize, Vec<String>) {
+fn header_end_and_dash_candidates(plain: &str) -> (usize, Vec<(String, usize, usize)>) {
     let bytes = plain.as_bytes();
     let mut i = 0;
     while i < bytes.len() && bytes[i].is_ascii_whitespace() {
@@ -113,9 +133,10 @@ fn header_end_and_dash_candidates(plain: &str) -> (usize, Vec<String>) {
             {
                 let m = cap.get_match();
                 let cap = cap.get(1).unwrap();
+                let (start_idx, end_idx) = (cap.start() + dash_idx, cap.end() + dash_idx);
                 if m.start() == 0 {
                     i += cap.end() - (i - dash_idx);
-                    dashed_candidates.push(cap.as_str().to_owned());
+                    dashed_candidates.push((cap.as_str().to_owned(), start_idx, end_idx));
                 } else {
                     break;
                 }
@@ -135,7 +156,6 @@ fn header_end_and_dash_candidates(plain: &str) -> (usize, Vec<String>) {
             glue += 1;
         }
     }
-    dbg!(&plain[i..]);
 
     if found_any {
         (last_end, dashed_candidates)
@@ -303,6 +323,12 @@ mod tests {
     fn fully_qualified_name_like_text_extend_header() {
         let cats = extract("17/06/09 20:10:40 INFO spark.SecurityManager: Changing view acls to: yarn,curi");
         assert_eq!(cats, vec!["spark.SecurityManager".to_string()]);
+    }
+
+    #[test]
+    fn merge_overlapping_candidates() {
+        let cats = extract("2015-07-29 19:04:29,071 - WARN  [SendWorker:188978561024:QuorumCnxManager$SendWorker@688] - Send worker leaving thread");
+        assert_eq!(cats, vec!["SendWorker:188978561024:QuorumCnxManager$SendWorker@688".to_string()]);
     }
 
     // NOTE The following test case would not be supported right now, as the categories appear as
