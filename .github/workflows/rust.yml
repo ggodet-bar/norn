@@ -23,7 +23,7 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
     - name: Run clippy (warnings not allowed)
-      run: cargo clippy -- --D warnings
+      run: cargo clippy -- -D warnings
     - name: Check formatting
       run: |
         rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt &&\
