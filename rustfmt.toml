@@ -1,0 +1,8 @@
+newline_style = "unix"
+
+unstable_features = true
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+edition = "2024"
+wrap_comments = true
+comment_width = 100

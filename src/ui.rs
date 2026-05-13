@@ -8,8 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::InputMode;
-use crate::app::App;
+use crate::{InputMode, app::App};
 
 const MATCH_STYLE: Style = Style::new()
     .bg(Color::Gray)
@@ -585,11 +584,10 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::InputMode;
-    use crate::app::App;
-    use crate::capture::LogLine;
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
+    use super::*;
+    use crate::{InputMode, app::App, capture::LogLine};
 
     /// Build a widths vector where `widths[0]` is the "0:all" body width
     /// and the remaining entries are uniform-width category tabs.

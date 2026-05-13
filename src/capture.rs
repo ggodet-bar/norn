@@ -1,7 +1,9 @@
-use std::io::{BufRead, BufReader, Read};
-use std::sync::mpsc::Sender;
-use std::thread;
-use std::time::Duration;
+use std::{
+    io::{BufRead, BufReader, Read},
+    sync::mpsc::Sender,
+    thread,
+    time::Duration,
+};
 
 #[derive(Debug)]
 pub struct LogLine {
@@ -171,11 +173,14 @@ fn strip_non_sgr(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs::{File, OpenOptions},
+        io::Write,
+        sync::mpsc,
+        time::Duration,
+    };
+
     use super::{LogLine, strip_non_sgr, tail_into};
-    use std::fs::{File, OpenOptions};
-    use std::io::Write;
-    use std::sync::mpsc;
-    use std::time::Duration;
 
     #[test]
     fn tail_into_emits_appended_and_buffers_partial_lines() {

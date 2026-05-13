@@ -1,5 +1,6 @@
-use regex::Regex;
 use std::collections::{HashMap, HashSet, VecDeque};
+
+use regex::Regex;
 
 use crate::categorize;
 

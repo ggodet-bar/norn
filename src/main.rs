@@ -2,12 +2,14 @@ mod app;
 mod capture;
 mod ui;
 
-use std::fs::File;
-use std::io::{self, IsTerminal};
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::{
+    fs::File,
+    io::{self, IsTerminal},
+    path::PathBuf,
+    str::FromStr,
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 use anyhow::anyhow;
 use crossterm::{
@@ -17,8 +19,10 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use crate::app::App;
-use crate::capture::{LogLine, pipe_into, tail_into};
+use crate::{
+    app::App,
+    capture::{LogLine, pipe_into, tail_into},
+};
 
 const DEFAULT_MAX_LINES: usize = 10_000;
 

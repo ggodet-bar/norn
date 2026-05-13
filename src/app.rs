@@ -2,9 +2,9 @@ use std::collections::VecDeque;
 
 use ansi_to_tui::IntoText;
 use ratatui::text::Line;
+use splog::log_view_state::{LogViewState, SearchState, ViewState};
 
 use crate::capture::LogLine;
-use splog::log_view_state::{LogViewState, SearchState, ViewState};
 
 pub struct App {
     /// `VecDeque` rather than `Vec` so the front-trim at `max_lines`
