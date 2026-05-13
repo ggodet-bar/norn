@@ -1,6 +1,5 @@
 mod app;
 mod capture;
-mod categorize;
 mod ui;
 
 use std::fs::File;

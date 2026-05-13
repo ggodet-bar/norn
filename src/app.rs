@@ -5,7 +5,7 @@ use ratatui::text::Line;
 use regex::Regex;
 
 use crate::capture::LogLine;
-use crate::categorize;
+use splog::categorize;
 
 /// A candidate must appear in this many distinct input lines before it gets a
 /// real pane — keeps line-unique noise out of the tab strip.

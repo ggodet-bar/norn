@@ -23,6 +23,7 @@ const MAX_GLUE: usize = 3;
 /// asides ("(session expired)", "(retrying)") out of the category set.
 /// Candidates between dashes, eg. `-...-` are parsed as a special case and returned
 /// immediately.
+#[inline]
 pub fn extract(line: &str) -> Vec<String> {
     let plain = strip_ansi(line);
     let (header_end, dashed_candidates) = header_end_and_dash_candidates(&plain);
@@ -177,9 +178,9 @@ fn header_token_re() -> &'static Regex {
             ^(?:
                 \[[^\[\]]+\]
               | \([^()]+\)
-              | \d{{4}}-\d{{2}}-\d{{2}}(?:[T\- ]\d{{2}}:\d{{2}}:\d{{2}}(?:\.\d+)?(?:Z|[+\-]\d{{2}}:?\d{{2}})?)?
-              | \d{{8}}[T\- ]\d{{2}}:\d{{2}}:\d{{2}}(?:\.\d+)?(?:Z|[+\-]\d{{2}}:?\d{{2}})?
-              | \d{{2}}:\d{{2}}:\d{{2}}(?:[\.,]\d+)?
+              | \d{{4}}-\d{{2}}-\d{{2}}T?
+              | \d{{8}}T?
+              | \d{{2}}:\d{{2}}:\d{{2}}(?:[\.,]\d+Z?)?
               | \d{{2}}(?:\d{{2}})?/((?:\D{{3}})|(?:\d{{2}}))/\d{{2}}(?:\d{{2}})?
               | [a-zA-Z](?:[a-zA-Z\.\$]|::)+[a-zA-Z\]]:
               | [+\-]\d{{2}}:?\d{{2}}
