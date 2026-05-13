@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn tail_into_emits_appended_and_buffers_partial_lines() {
         let path = std::env::temp_dir().join(format!(
-            "norn_tail_{}_{:?}.log",
+            "splog_tail_{}_{:?}.log",
             std::process::id(),
             std::thread::current().id()
         ));

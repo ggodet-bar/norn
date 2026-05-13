@@ -270,19 +270,19 @@ mod tests {
     #[test]
     fn compact_yyyymmdd_dash_time_extends_header() {
         let cats = extract(
-            "20250605-16:47:03.940196000 DEBUG [Strategy/ETHUSDC] \
-             Rejecting pending position 62 while at px 2610.95",
+            "20250605-16:47:03.940196000 DEBUG [Strat] \
+             Starting process round 0",
         );
-        assert_eq!(cats, vec!["Strategy/ETHUSDC".to_string()]);
+        assert_eq!(cats, vec!["Strat".to_string()]);
     }
 
     #[test]
     fn dd_slash_month_slash_year_time_extends_header() {
         let cats = extract(
-            "01/Jan/2016:03:45:49 +0100 DEBUG [Strategy/ETHUSDC] \
-             Rejecting pending position 62 while at px 2610.95",
+            "01/Jan/2016:03:45:49 +0100 DEBUG [Strat] \
+             Starting process round 0",
         );
-        assert_eq!(cats, vec!["Strategy/ETHUSDC".to_string()]);
+        assert_eq!(cats, vec!["Strat".to_string()]);
     }
 
     #[test]

@@ -58,7 +58,7 @@ fn main() -> anyhow::Result<()> {
         }
         None => {
             if io::stdin().is_terminal() {
-                eprintln!("Missing filename. Run `norn --help` for usage.");
+                eprintln!("Missing filename. Run `splog --help` for usage.");
                 std::process::exit(2);
             }
             pipe_into(io::stdin(), tx);
@@ -146,7 +146,7 @@ fn parse_args() -> anyhow::Result<Args> {
                 std::process::exit(0);
             }
             "-V" | "--version" => {
-                println!("norn {}", env!("CARGO_PKG_VERSION"));
+                println!("splog {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
             _ if idx == 1 => {
@@ -177,9 +177,9 @@ fn parse_args() -> anyhow::Result<Args> {
 
 fn print_help() {
     println!(
-        "norn — TUI log viewer that splits lines into categories\n\
+        "splog — TUI log viewer that splits lines into categories\n\
          \n\
-         Usage: norn [FILEPATH] [OPTIONS]\n\
+         Usage: splog [FILEPATH] [OPTIONS]\n\
          \n\
          Options:\n  \
            -n, --max-lines N   retain at most N display rows; 0 = unlimited \
