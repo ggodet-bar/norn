@@ -54,7 +54,8 @@ pub fn draw(f: &mut Frame, app: &mut App, mode: &InputMode) {
 fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
     let labels: Vec<String> = std::iter::once("0:all".to_string())
         .chain(
-            app.categories
+            app.log_view_state
+                .categories
                 .iter()
                 .enumerate()
                 .map(|(i, c)| format!("{}:{}", i + 1, truncate(&c.name, 20))),
@@ -205,7 +206,10 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     let title = if app.selected == 0 {
         " all ".to_string()
     } else {
-        format!(" {} ", app.categories[app.selected - 1].name)
+        format!(
+            " {} ",
+            app.log_view_state.get_category(app.selected - 1).name
+        )
     };
     let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
@@ -214,7 +218,10 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     let total = if app.selected == 0 {
         app.rendered.len()
     } else {
-        app.categories[app.selected - 1].indices.len()
+        app.log_view_state
+            .get_category(app.selected - 1)
+            .indices
+            .len()
     };
 
     // Reconcile follow / clamp first so we know the visible window before
@@ -241,7 +248,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
             (scroll..visible_end).collect(),
         )
     } else {
-        let cat = &app.categories[app.selected - 1];
+        let cat = app.log_view_state.get_category(app.selected - 1);
         let slice = &cat.indices[scroll..visible_end];
         (
             slice.iter().map(|&i| app.rendered[i].clone()).collect(),
@@ -253,7 +260,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     let goto_mask: Vec<bool> = match app.goto_highlight {
         Some(target) => render_rows
             .iter()
-            .map(|&r| app.line_numbers.get(r).copied() == Some(target))
+            .map(|&r| app.log_view_state.line_numbers().get(r).copied() == Some(target))
             .collect(),
         None => Vec::new(),
     };
@@ -262,15 +269,25 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
         // just the visible window) so the gutter width stays stable as
         // the user scrolls.
         let max_line_no = if app.selected == 0 {
-            app.line_numbers.back().copied().unwrap_or(0)
+            app.log_view_state
+                .line_numbers()
+                .back()
+                .copied()
+                .unwrap_or(0)
         } else {
-            app.categories[app.selected - 1]
+            app.log_view_state
+                .get_category(app.selected - 1)
                 .indices
                 .last()
-                .and_then(|&i| app.line_numbers.get(i).copied())
+                .and_then(|&i| app.log_view_state.line_numbers().get(i).copied())
                 .unwrap_or(0)
         };
-        build_line_number_gutter(&render_rows, &app.line_numbers, &goto_mask, max_line_no)
+        build_line_number_gutter(
+            &render_rows,
+            app.log_view_state.line_numbers(),
+            &goto_mask,
+            max_line_no,
+        )
     } else {
         Vec::new()
     };
@@ -462,9 +479,9 @@ fn style_at(line: &Line<'static>, offset: usize) -> Style {
 
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let (label, total, view) = if app.selected == 0 {
-        ("all", app.rendered.len(), &app.main)
+        ("all", app.rendered.len(), &app.log_view_state.main)
     } else {
-        let cat = &app.categories[app.selected - 1];
+        let cat = &app.log_view_state.categories[app.selected - 1];
         (cat.name.as_str(), cat.indices.len(), &cat.view)
     };
     let mut s = format!(
@@ -1056,8 +1073,8 @@ mod tests {
     fn draw_renders_promoted_category_tab_label() {
         let mut app = App::new(None, true);
         push_lines(&mut app, &["[db] a", "[db] b", "[db] c"]);
-        assert_eq!(app.categories.len(), 1);
-        let name = app.categories[0].name.clone();
+        assert_eq!(app.log_view_state.categories.len(), 1);
+        let name = app.log_view_state.get_category(0).name.clone();
         let buf = render(&mut app, &InputMode::Normal, 80, 10);
         let text = buffer_text(&buf);
         assert!(
@@ -1070,7 +1087,7 @@ mod tests {
     fn draw_category_pane_uses_category_name_in_title() {
         let mut app = App::new(None, true);
         push_lines(&mut app, &["[db] a", "[db] b", "[db] c"]);
-        let name = app.categories[0].name.clone();
+        let name = app.log_view_state.get_category(0).name.clone();
         app.selected = 1;
         let buf = render(&mut app, &InputMode::Normal, 80, 10);
         let text = buffer_text(&buf);
@@ -1136,7 +1153,7 @@ mod tests {
     fn draw_follow_status_shows_paused_when_not_following() {
         let mut app = App::new(None, true);
         push_lines(&mut app, &["x"]);
-        app.main.follow = false;
+        app.log_view_state.main.follow = false;
         let buf = render(&mut app, &InputMode::Normal, 80, 10);
         let text = buffer_text(&buf);
         assert!(text.contains("PAUSED"), "PAUSED indicator missing\n{text}");
