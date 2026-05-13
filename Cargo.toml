@@ -7,6 +7,10 @@ readme = "README.md"
 description = "A TUI log viewer with automatic category filtering"
 homepage = "https://github.com/ggodet-bar/splog"
 repository = "https://github.com/ggodet-bar/splog"
+include = ["/src", "LICENSE.md", "README.md", "/benches"]
+categories = ["command-line-utilities", "development-tools::debugging", "visualization"]
+keywords = ["cli", "terminal", "tui", "logs", "log-viewer"]
+rust-version = "1.88.0"
 
 [dependencies]
 ratatui = "0.30"
