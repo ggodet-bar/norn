@@ -1,3 +1,5 @@
+//! This module handles the logic for parsing log lines, for identifying the line header, if any,
+//! and for extracting category candidates.
 use std::{borrow::Cow, collections::HashSet, sync::OnceLock};
 
 use regex::Regex;

@@ -1,3 +1,6 @@
+//! This module handles the abstract representation of `splog`'s user interface: the panel
+//! contents, their attached search queries and potential matches. It also handles the system
+//! for promoting category candidates to valid categories that will have their own view.
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use regex::Regex;
@@ -16,6 +19,8 @@ const BURST_WINDOW: usize = 6;
 /// dropped so memory doesn't grow with one-off tags.
 const PENDING_EVICTION_AGE: usize = 200;
 
+/// Handles scrolling-related data for a given displayed category, and whether the display should
+/// follow additions to the bottom of the buffer.
 pub struct ViewState {
     scroll: usize,
     /// Horizontal column offset of the body relative to its rendered column 0.
@@ -97,9 +102,11 @@ impl ViewState {
     }
 }
 
+/// Handles data relative to a promoted category, i.e. a category that will be displayed to the
+/// user in its own view. Also handles the category's associated search, if any.
 pub struct Category {
     name: String,
-    /// Strictly increasing row indices into `App::rendered`.
+    /// Strictly increasing row indices into `LogViewState::lines`.
     indices: Vec<usize>,
     view: ViewState,
     search: SearchState,
@@ -262,6 +269,7 @@ struct PendingCategory {
     recent_seqs: VecDeque<usize>,
 }
 
+/// Primary struct for storing the UI's abstract state.
 pub struct LogViewState {
     /// `VecDeque` rather than `Vec` so the front-trim at `max_lines`
     /// capacity is O(1) (head-pointer advance) instead of an O(N)
@@ -299,6 +307,56 @@ impl LogViewState {
         }
     }
 
+    fn record_category_occurrence(
+        &mut self,
+        cat_name: &str,
+        start: usize,
+        end: usize,
+        seq: usize,
+    ) -> bool {
+        let entry = self
+            .pending
+            .entry(cat_name.to_owned())
+            .or_insert_with(|| PendingCategory {
+                hits: 0,
+                rows: Vec::new(),
+                last_seen_seq: seq,
+                recent_seqs: VecDeque::with_capacity(BURST_HITS),
+            });
+        if entry.recent_seqs.len() == BURST_HITS {
+            entry.recent_seqs.pop_front();
+        }
+        entry.recent_seqs.push_back(seq);
+        entry.hits += 1;
+        entry.rows.extend(start..end);
+        entry.last_seen_seq = seq;
+        let burst = entry.recent_seqs.len() == BURST_HITS
+            && seq - entry.recent_seqs.front().copied().unwrap() < BURST_WINDOW;
+        entry.hits >= PROMOTION_THRESHOLD || burst
+    }
+
+    fn promote_category(&mut self, cat_name: String) {
+        let pending = self.pending.remove(&cat_name).expect("just promoted");
+        let idx = self.categories.len();
+        self.category_index.insert(cat_name.clone(), idx);
+        self.categories.push(Category {
+            name: cat_name,
+            indices: pending.rows,
+            view: ViewState::new(self.main.display_follow),
+            search: SearchState::default(),
+            match_regex: None,
+        });
+    }
+
+    /// Records a new log line.
+    ///
+    /// This is where most of the application work occurs. This method:
+    ///
+    /// * extracts candidate categories from the `line` header,
+    /// * adjusts the size of the internal buffer to keep it within the configured `max_lines`,
+    /// * records category occurrences and promotes them to new views if necessary,
+    /// * dispatches new lines to the various views, including the views created for displaying
+    ///   search matches.
     pub fn push(&mut self, line: String) {
         let cats = categorize::extract(&line);
 
@@ -321,39 +379,8 @@ impl LogViewState {
                 continue;
             }
 
-            let promote = {
-                let entry =
-                    self.pending
-                        .entry(cat_name.clone())
-                        .or_insert_with(|| PendingCategory {
-                            hits: 0,
-                            rows: Vec::new(),
-                            last_seen_seq: seq,
-                            recent_seqs: VecDeque::with_capacity(BURST_HITS),
-                        });
-                if entry.recent_seqs.len() == BURST_HITS {
-                    entry.recent_seqs.pop_front();
-                }
-                entry.recent_seqs.push_back(seq);
-                entry.hits += 1;
-                entry.rows.extend(start..end);
-                entry.last_seen_seq = seq;
-                let burst = entry.recent_seqs.len() == BURST_HITS
-                    && seq - entry.recent_seqs.front().copied().unwrap() < BURST_WINDOW;
-                entry.hits >= PROMOTION_THRESHOLD || burst
-            };
-
-            if promote {
-                let pending = self.pending.remove(&cat_name).expect("just promoted");
-                let idx = self.categories.len();
-                self.category_index.insert(cat_name.clone(), idx);
-                self.categories.push(Category {
-                    name: cat_name,
-                    indices: pending.rows,
-                    view: ViewState::new(self.main.display_follow),
-                    search: SearchState::default(),
-                    match_regex: None,
-                });
+            if self.record_category_occurrence(&cat_name, start, end, seq) {
+                self.promote_category(cat_name);
             }
         }
 
