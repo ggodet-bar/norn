@@ -58,6 +58,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+        - build: stable-x86_64
+          os: ubuntu-latest
+          rust: stable
+          target: x86_64-unknown-linux-gnu
+          strip: x86_64-linux-gnu-strip
         - build: stable-x86
           os: ubuntu-latest
           rust: stable
@@ -78,15 +83,15 @@ jobs:
           qemu: qemu-arm
         - build: macos
           os: macos-latest
-          rust: nightly
+          rust: stable
           target: x86_64-apple-darwin
         - build: macos
           os: macos-latest
-          rust: nightly
+          rust: stable
           target: aarch64-apple-darwin
         - build: win-msvc
           os: windows-latest
-          rust: nightly
+          rust: stable
           target: x86_64-pc-windows-msvc
         - build: win-gnu
           os: windows-latest
@@ -94,7 +99,7 @@ jobs:
           target: x86_64-pc-windows-gnu
         - build: winaarch64-msvc
           os: windows-11-arm
-          rust: nightly
+          rust: stable
           target: aarch64-pc-windows-msvc
 
     steps:

@@ -18,22 +18,28 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install Rust
+    - name: Install Rust nightly (format check)
       uses: dtolnay/rust-toolchain@nightly
       with:
-        components: "clippy,rustfmt"
-
-    - name: Build
-      run: cargo build --verbose
+        components: "rustfmt"
 
     - name: Check format
       run: cargo fmt --check
 
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: "clippy"
+
+    - name: Build
+      run: cargo build --workspace --verbose
+
     - name: Audit dependencies
-      run: cargo install cargo-audit && cargo audit -D warnings
+      uses: taiki-e/install-action@cargo-audit 
+      run: cargo audit -D warnings
 
     - name: Run clippy
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --workspace --all-targets -- -D warnings
       
   build:
     name: Build & Test
@@ -56,7 +62,7 @@ jobs:
         include:
         - build: pinned
           os: ubuntu-latest
-          rust: $RUST_MIN_SRV
+          rust: 1.88.0 # env variables not available in the matrix
         - build: stable-x86
           os: ubuntu-latest
           rust: stable
@@ -115,17 +121,5 @@ jobs:
     
     - name: Run tests
       run: ${{ env.CARGO }} test --verbose --workspace ${{ env.TARGET_FLAGS }}
-
-  min_version:
-    name: Minimum supported rust version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install `rust` toolchain (v${{ env.RUST_MIN_SRV }})
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_MIN_SRV }}
-      - name: Test on MSRV
-        run: rustc --version && cargo test
     
     
