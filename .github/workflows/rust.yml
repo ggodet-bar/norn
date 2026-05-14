@@ -11,23 +11,110 @@ env:
   RUST_MIN_SRV: "1.88.0"
 
 jobs:
-  build:
-    name: Build & Test
-
+  check:
+    name: Checks & Lint
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: "clippy,rustfmt"
+
     - name: Build
       run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
-    - name: Run clippy (warnings not allowed)
+
+    - name: Check format
+      run: cargo fmt --check
+
+    - name: Audit dependencies
+      run: cargo install cargo-audit && cargo audit -D warnings
+
+    - name: Run clippy
       run: cargo clippy -- -D warnings
-    - name: Check formatting
+      
+  build:
+    name: Build & Test
+    env:
+      # For some builds, we use cross to test on 32-bit and big-endian
+      # systems.
+      CARGO: cargo
+      # When CARGO is set to CROSS, this is set to `--target matrix.target`.
+      # Note that we only use cross on Linux, so setting a target on a
+      # different OS will just use normal cargo.
+      TARGET_FLAGS:
+      # When CARGO is set to CROSS, TARGET_DIR includes matrix.target.
+      TARGET_DIR: ./target
+      CROSS_VERSION: v0.2.5
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - build: pinned
+          os: ubuntu-latest
+          rust: $RUST_MIN_SRV
+        - build: stable-x86
+          os: ubuntu-latest
+          rust: stable
+        - build: nightly
+          os: ubuntu-latest
+          rust: nightly
+        - build: stable-aarch64
+          os: ubuntu-latest
+          rust: stable
+          target: aarch64-unknown-linux-gnu
+        - build: macos
+          os: macos-latest
+          rust: stable
+        - build: win-msvc
+          os: windows-latest
+          rust: stable
+        - build: win-gnu
+          os: windows-latest
+          rust: nightly-x86_64-gnu
+        - build: winaarch64-msvc
+          os: windows-11-arm
+          rust: stable
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+
+    - name: Use Cross
+      if: matrix.os == 'ubuntu-latest' && matrix.target != ''
       run: |
-        rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt &&\
-        cargo +nightly fmt --check
+        # We also the cross pre-compiled binary releases because cross
+        # has over 100 dependencies and takes a bit to compile.
+        dir="$RUNNER_TEMP/cross-download"
+        mkdir "$dir"
+        echo "$dir" >> $GITHUB_PATH
+        cd "$dir"
+        curl -LO "https://github.com/cross-rs/cross/releases/download/$CROSS_VERSION/cross-x86_64-unknown-linux-musl.tar.gz"
+        tar xf cross-x86_64-unknown-linux-musl.tar.gz
+        echo "CARGO=cross" >> $GITHUB_ENV
+        echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+        echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+    - name: Show command used for Cargo
+      run: |
+        echo "cargo command is: ${{ env.CARGO }}"
+        echo "target flag is: ${{ env.TARGET_FLAGS }}"
+        echo "target dir is: ${{ env.TARGET_DIR }}"
+
+    - name: Build splog and splog-core
+      run: ${{ env.CARGO }} build --verbose --workspace ${{ env.TARGET_FLAGS }}
+    
+    - name: Run tests
+      run: ${{ env.CARGO }} test --verbose --workspace ${{ env.TARGET_FLAGS }}
 
   min_version:
     name: Minimum supported rust version
