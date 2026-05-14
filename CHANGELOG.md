@@ -13,4 +13,7 @@ All changes have been released.
 
 ### Added
 
-- Provide a feature-complete version of the tool, with a minimal release to all platforms.
+- Provide a feature-complete version of the tool, with a minimal release to all platforms. Main
+  functionality includes auto-categorization from log line headers, search support (with or without
+  regex), manual promotion of search results to categories, file follow mode, reading from stdin,
+  and goto line jumps.
