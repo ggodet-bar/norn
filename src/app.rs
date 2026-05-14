@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use ansi_to_tui::IntoText;
 use ratatui::text::Line;
-use splog::log_view_state::{LogViewState, SearchState, ViewState};
+use splog_core::log_view_state::{LogViewState, SearchState, ViewState};
 
 use crate::capture::LogLine;
 

@@ -1,0 +1,18 @@
+[package]
+name = "splog-core"
+version = "0.1.0"
+edition = "2024"
+license-file = "../../LICENSE.md"
+description = "Core categorization and log-view state for the splog TUI"
+homepage = "https://github.com/ggodet-bar/splog"
+repository = "https://github.com/ggodet-bar/splog"
+
+[dependencies]
+regex = "1.12"
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "categorization"
+harness = false

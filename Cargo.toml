@@ -12,19 +12,17 @@ categories = ["command-line-utilities", "development-tools::debugging", "visuali
 keywords = ["cli", "terminal", "tui", "logs", "log-viewer"]
 rust-version = "1.88.0"
 
+[workspace]
+members = [".", "crates/splog-core"]
+
+
 [dependencies]
+splog-core = { path = "crates/splog-core", version = "0.1.0" }
 ratatui = "0.30"
 crossterm = { version = "0.29", features = ["use-dev-tty", "libc"] }
 ansi-to-tui = "8.0"
 anyhow = "1.0"
 regex = "1.12"
-
-[dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports"] }
-
-[[bench]]
-name = "categorization"
-harness = false
 
 [profile.release]
 lto = true

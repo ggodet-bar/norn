@@ -1,7 +1,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use splog::categorize::extract;
+use splog_core::categorize::extract;
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("extract long tag", |b| b.iter(|| extract(black_box("2015-07-29 19:04:29,071 - WARN  [SendWorker:188978561024:QuorumCnxManager$SendWorker@688] - Send worker leaving thread"))));
