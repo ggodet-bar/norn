@@ -1,13 +1,17 @@
 [package]
 name = "splog-core"
 description = "Core categorization and log-view state for the splog TUI"
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 homepage.workspace = true
 readme = "README.md"
-repository = "https://github.com/ggodet-bar/splog/crates/splog-core"
-include = ["/src", "README.md"]
+repository = "https://github.com/ggodet-bar/splog/tree/main/crates/splog-core"
+include = ["/src", "README.md", "LICENSE.md"]
 
 [dependencies]
 regex = { workspace = true }

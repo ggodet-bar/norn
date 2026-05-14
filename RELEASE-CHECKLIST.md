@@ -8,7 +8,8 @@
   `--aggressive`, but don't update to crates that are still in beta.
 * Update the CHANGELOG as appropriate.
 * Review changes made to `crates/splog-core`, and issue a new release for this
-crate if there are any changes.
+crate if there are any changes. Update the main `Cargo.toml` to updated the
+  `splog-core` version dependency.
 * Edit `Cargo.toml` to set the new version.
 * Run `cargo update -p splog` to update `Cargo.lock`. Commit the changes and
   push to GitHub.
