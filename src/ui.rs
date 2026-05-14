@@ -583,7 +583,7 @@ mod tests {
     fn uniform(n_cats: usize, cat_width: usize) -> Vec<usize> {
         let mut v = Vec::with_capacity(n_cats + 1);
         v.push(7); // " 0:all "
-        v.extend(std::iter::repeat(cat_width).take(n_cats));
+        v.extend(std::iter::repeat_n(cat_width, n_cats));
         v
     }
 
