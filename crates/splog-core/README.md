@@ -1,9 +1,8 @@
 # `splog-core`
 
-Core categorization and log-view state for the `splog` TUI.
-
-__NOTE__: This crate manages the internal state of `splog`. It isn't meant for
-direct use – at least yet.
+Core categorization and log-view state for the `splog` TUI. Internal support
+crate for the `splog` binary. The public API currently has no stability
+guarantees – depend on it at your own risk.
 
 ## Usage
 

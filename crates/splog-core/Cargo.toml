@@ -1,6 +1,6 @@
 [package]
 name = "splog-core"
-description = "Core categorization and log-view state for the splog TUI"
+description = "Internal categorization engine and log-view state for the splog TUI. Not intended for external use."
 authors.workspace = true
 categories.workspace = true
 keywords.workspace = true
