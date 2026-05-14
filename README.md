@@ -71,6 +71,9 @@ Note that the minimum supported version of Rust for `splog` is 1.88.0.
 cargo install splog
 ```
 
+Binaries for Linux, MacOS and Windows may be downloaded from the
+[release page](https://github.com/ggodet-bar/splog/releases).
+
 ## Building
 
 `splog` may be built from a recent-ish Rust installation (1.88.0 or newer).
