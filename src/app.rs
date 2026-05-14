@@ -57,20 +57,16 @@ impl App {
     pub fn active_view_mut(&mut self) -> (&mut ViewState, usize) {
         if self.selected == 0 {
             let total = self.rendered.len();
-            (&mut self.log_view_state.main, total)
+            (self.log_view_state.main_view_mut(), total)
         } else {
-            let cat = &mut self.log_view_state.categories[self.selected - 1];
-            let total = cat.indices.len();
-            (&mut cat.view, total)
+            let cat = self.log_view_state.get_category_mut(self.selected - 1);
+            let total = cat.indices_count();
+            (cat.view_mut(), total)
         }
     }
 
     pub fn active_search(&self) -> &SearchState {
-        if self.selected == 0 {
-            &self.log_view_state.main_search
-        } else {
-            &self.log_view_state.categories[self.selected - 1].search
-        }
+        self.log_view_state.get_search(self.selected)
     }
 
     fn active_search_mut(&mut self) -> &mut SearchState {
@@ -99,26 +95,25 @@ impl App {
 
     pub fn scroll_top(&mut self) {
         let (v, _) = self.active_view_mut();
-        v.follow = false;
-        v.scroll = 0;
+        v.scroll_top();
     }
 
     pub fn scroll_bottom(&mut self) {
         let (v, _) = self.active_view_mut();
-        v.follow = true;
+        v.scroll_bottom();
     }
 
     pub fn next_tab(&mut self) {
-        self.selected = (self.selected + 1) % (self.log_view_state.categories.len() + 1);
+        self.selected = (self.selected + 1) % (self.log_view_state.category_count() + 1);
     }
 
     pub fn prev_tab(&mut self) {
-        let n = self.log_view_state.categories.len() + 1;
+        let n = self.log_view_state.category_count() + 1;
         self.selected = (self.selected + n - 1) % n;
     }
 
     pub fn select_tab(&mut self, idx: usize) {
-        if idx <= self.log_view_state.categories.len() {
+        if idx <= self.log_view_state.category_count() {
             self.selected = idx;
         }
     }
@@ -140,28 +135,12 @@ impl App {
     /// the new current match.
     pub fn search_next(&mut self) -> Option<usize> {
         let s = self.active_search_mut();
-        if s.matches.is_empty() {
-            return None;
-        }
-        let next = match s.current {
-            Some(i) => (i + 1) % s.matches.len(),
-            None => 0,
-        };
-        s.current = Some(next);
-        Some(s.matches[next].row)
+        s.search_next()
     }
 
     pub fn search_prev(&mut self) -> Option<usize> {
         let s = self.active_search_mut();
-        if s.matches.is_empty() {
-            return None;
-        }
-        let prev = match s.current {
-            Some(i) => (i + s.matches.len() - 1) % s.matches.len(),
-            None => s.matches.len() - 1,
-        };
-        s.current = Some(prev);
-        Some(s.matches[prev].row)
+        s.search_prev()
     }
 
     pub fn clear_search(&mut self) {
@@ -203,16 +182,18 @@ impl App {
         } else {
             let cat = &self.log_view_state.get_category(self.selected - 1);
             closest_row_by(
-                cat.indices.len(),
-                |i| self.log_view_state.line_numbers()[cat.indices[i]],
+                cat.indices_count(),
+                |i| self.log_view_state.line_numbers()[cat.index(i)],
                 target,
             )
         }?;
         let actual = if self.selected == 0 {
             self.log_view_state.line_numbers()[row]
         } else {
-            self.log_view_state.line_numbers()
-                [self.log_view_state.get_category(self.selected - 1).indices[row]]
+            self.log_view_state.line_numbers()[self
+                .log_view_state
+                .get_category(self.selected - 1)
+                .index(row)]
         };
         self.goto_highlight = Some(actual);
         Some(row)
@@ -293,7 +274,7 @@ mod test {
         let mut app = App::new(None, true);
         push_lines(&mut app, &["a", "a", "a"]);
         app.commit_search("a", false).unwrap();
-        assert_eq!(app.log_view_state.main_search.current, Some(0));
+        assert_eq!(app.log_view_state.get_search(0).current(), Some(0));
         assert_eq!(app.search_next(), Some(1));
         assert_eq!(app.search_next(), Some(2));
         assert_eq!(app.search_next(), Some(0));
@@ -307,10 +288,10 @@ mod test {
         app.commit_search("foo", false).unwrap();
         app.search_next();
         app.search_next();
-        assert_eq!(app.log_view_state.main_search.current, Some(2));
+        assert_eq!(app.log_view_state.get_search(0).current(), Some(2));
         push_lines(&mut app, &["foo"]);
         // Oldest match dropped; current slides from 2 -> 1.
-        assert_eq!(app.log_view_state.main_search.current, Some(1));
+        assert_eq!(app.log_view_state.get_search(0).current(), Some(1));
     }
 
     #[test]
@@ -318,18 +299,18 @@ mod test {
         let mut app = App::new(None, true);
         // Burst-promote "[db]" so we have a category pane to ignore.
         push_lines(&mut app, &["[db] a", "[db] b", "[db] c"]);
-        assert_eq!(app.log_view_state.categories.len(), 1);
-        let name = app.log_view_state.get_category(0).name.clone();
+        assert_eq!(app.log_view_state.category_count(), 1);
+        let name = app.log_view_state.get_category(0).name().to_owned();
         app.selected = 1;
         app.ignore_active_category();
-        assert!(app.log_view_state.categories.is_empty());
+        assert_eq!(app.log_view_state.category_count(), 0);
         // Selection slides one tab left — from the only category back to "all".
         assert_eq!(app.selected, 0);
         // Subsequent matching lines must not re-promote the category.
         for _ in 0..20 {
             push_lines(&mut app, &[&format!("[{name}] again")]);
         }
-        assert!(app.log_view_state.categories.is_empty());
+        assert_eq!(app.log_view_state.category_count(), 0);
     }
 
     #[test]
@@ -342,12 +323,12 @@ mod test {
                 "[db] 1", "[db] 2", "[db] 3", "[auth] 1", "[auth] 2", "[auth] 3",
             ],
         );
-        assert_eq!(app.log_view_state.categories.len(), 2);
+        assert_eq!(app.log_view_state.category_count(), 2);
         // Select the second category and ignore it; selection should fall
         // back to the first category (tab index 1), not "all".
         app.selected = 2;
         app.ignore_active_category();
-        assert_eq!(app.log_view_state.categories.len(), 1);
+        assert_eq!(app.log_view_state.category_count(), 1);
         assert_eq!(app.selected, 1);
     }
 
@@ -382,7 +363,7 @@ mod test {
         // Burst-promote `[db]`, then push lines that bypass it so the
         // category's input line numbers skip values.
         push_lines(&mut app, &["[db] 1", "[db] 2", "[db] 3"]);
-        assert_eq!(app.log_view_state.categories.len(), 1);
+        assert_eq!(app.log_view_state.category_count(), 1);
         push_lines(&mut app, &["plain a", "plain b", "[db] 4"]);
         app.selected = 1;
         // The pane's input line numbers are [1, 2, 3, 6]. Target 5 sits
@@ -401,13 +382,13 @@ mod test {
     fn promote_search_overrides_ignored_name() {
         let mut app = App::new(None, true);
         push_lines(&mut app, &["[db] 1", "[db] 2", "[db] 3"]);
-        let name = app.log_view_state.get_category(0).name.clone();
+        let name = app.log_view_state.get_category(0).name().to_owned();
         app.selected = 1;
         app.ignore_active_category();
-        assert!(app.log_view_state.categories.is_empty());
+        assert_eq!(app.log_view_state.category_count(), 0);
         // Explicit promotion bypasses the ignore-list and re-creates the pane.
         assert!(app.promote_search_to_category(&name, false).unwrap());
-        assert_eq!(app.log_view_state.categories.len(), 1);
+        assert_eq!(app.log_view_state.category_count(), 1);
     }
 
     #[test]
@@ -415,17 +396,17 @@ mod test {
         let mut app = App::new(None, true);
         // Burst-promote `[db]` via the tag path.
         push_lines(&mut app, &["[db] 1", "[db] 2", "[db] 3"]);
-        assert_eq!(app.log_view_state.categories.len(), 1);
-        let name = app.log_view_state.get_category(0).name.clone();
-        let before = app.log_view_state.get_category(0).indices.clone();
+        assert_eq!(app.log_view_state.category_count(), 1);
+        let name = app.log_view_state.get_category(0).name().to_owned();
+        let before = app.log_view_state.get_category(0).indices().to_vec();
         app.selected = 0;
         assert!(app.promote_search_to_category(&name, false).unwrap());
-        assert_eq!(app.log_view_state.categories.len(), 1);
-        assert_eq!(app.log_view_state.get_category(0).indices, before);
+        assert_eq!(app.log_view_state.category_count(), 1);
+        assert_eq!(app.log_view_state.get_category(0).indices(), before);
         // Switched to that pane.
         assert_eq!(app.selected, 1);
         // Did not retroactively pin a regex on the tag-extracted pane.
-        assert!(app.log_view_state.get_category(0).match_regex.is_none());
+        assert!(app.log_view_state.get_category(0).match_regex().is_none());
     }
 
     #[test]
@@ -433,7 +414,7 @@ mod test {
         let mut app = App::new(None, true);
         push_lines(&mut app, &["abc", "def"]);
         assert_eq!(app.commit_search("zzz", false).unwrap(), 0);
-        assert_eq!(app.log_view_state.main_search.current, None);
+        assert_eq!(app.log_view_state.get_search(0).current(), None);
         assert_eq!(app.search_next(), None);
     }
 }

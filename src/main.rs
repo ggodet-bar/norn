@@ -401,7 +401,7 @@ fn handle_normal_key(key: KeyEvent, app: &mut App, viewport: usize) -> Option<In
         // Esc clears an active search before falling back to quit, so
         // pressing it once "exits" search mode the way users expect.
         (KeyCode::Esc, _) => {
-            if app.active_search().query.is_some() {
+            if app.active_search().query().is_some() {
                 app.clear_search();
                 Some(InputMode::Normal)
             } else {
@@ -461,9 +461,9 @@ fn handle_normal_key(key: KeyEvent, app: &mut App, viewport: usize) -> Option<In
         // backed by the search regex so future matching pushes flow in.
         // No-op when no search is active.
         (KeyCode::Char('c'), m) if !m.contains(KeyModifiers::CONTROL) => {
-            if let Some(q) = app.active_search().query.as_ref() {
-                let raw = q.raw.clone();
-                let is_regex = q.is_regex;
+            if let Some(q) = app.active_search().query() {
+                let raw = q.raw_query().to_owned();
+                let is_regex = q.is_regex();
                 let _ = app.promote_search_to_category(&raw, is_regex);
             }
             Some(InputMode::Normal)
@@ -487,13 +487,12 @@ fn handle_normal_key(key: KeyEvent, app: &mut App, viewport: usize) -> Option<In
 
 fn current_match_row(app: &App) -> Option<usize> {
     let s = app.active_search();
-    s.current.and_then(|c| s.matches.get(c)).map(|m| m.row)
+    s.current_match_row()
 }
 
 fn scroll_to_row(app: &mut App, row: usize, viewport: usize) {
     let (view, total) = app.active_view_mut();
     let half = viewport / 2;
     let max_scroll = total.saturating_sub(viewport);
-    view.scroll = row.saturating_sub(half).min(max_scroll);
-    view.follow = false;
+    view.scroll_to_row(row.saturating_sub(half).min(max_scroll));
 }

@@ -54,10 +54,8 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
     let labels: Vec<String> = std::iter::once("0:all".to_string())
         .chain(
             app.log_view_state
-                .categories
-                .iter()
-                .enumerate()
-                .map(|(i, c)| format!("{}:{}", i + 1, truncate(&c.name, 20))),
+                .category_indices_and_names()
+                .map(|(i, name)| format!("{}:{}", i + 1, truncate(name, 20))),
         )
         .collect();
     // Each tab body is rendered as ` label ` so width is `chars + 2`.
@@ -207,7 +205,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         format!(
             " {} ",
-            app.log_view_state.get_category(app.selected - 1).name
+            app.log_view_state.get_category(app.selected - 1).name()
         )
     };
     let block = Block::default().borders(Borders::ALL).title(title);
@@ -219,8 +217,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         app.log_view_state
             .get_category(app.selected - 1)
-            .indices
-            .len()
+            .indices_count()
     };
 
     // Reconcile follow / clamp first so we know the visible window before
@@ -229,12 +226,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     let max_scroll = total.saturating_sub(viewport);
     let scroll = {
         let (view, _) = app.active_view_mut();
-        if view.follow {
-            view.scroll = max_scroll;
-        } else {
-            view.scroll = view.scroll.min(max_scroll);
-        }
-        view.scroll
+        view.follow_or_clamp(max_scroll)
     };
     let visible_end = (scroll + viewport).min(total);
 
@@ -248,7 +240,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
         )
     } else {
         let cat = app.log_view_state.get_category(app.selected - 1);
-        let slice = &cat.indices[scroll..visible_end];
+        let slice = &cat.indices()[scroll..visible_end];
         (
             slice.iter().map(|&i| app.rendered[i].clone()).collect(),
             slice.to_vec(),
@@ -276,8 +268,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             app.log_view_state
                 .get_category(app.selected - 1)
-                .indices
-                .last()
+                .last_index()
                 .and_then(|&i| app.log_view_state.line_numbers().get(i).copied())
                 .unwrap_or(0)
         };
@@ -309,8 +300,7 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     let max_hscroll = max_body_width.saturating_sub(body_area.width as usize);
     let hscroll = {
         let (view, _) = app.active_view_mut();
-        view.hscroll = view.hscroll.min(max_hscroll);
-        view.hscroll
+        view.clamp_hscroll(max_hscroll)
     } as u16;
 
     f.render_widget(&block, area);
@@ -389,19 +379,18 @@ fn apply_goto_highlight(lines: &mut [Line<'static>], goto_mask: &[bool]) {
 /// Relies on `SearchState::matches` being sorted by `(row, start)`.
 fn apply_search_highlights(lines: &mut [Line<'static>], app: &App, scroll: usize) {
     let search = app.active_search();
-    if search.query.is_none() || search.matches.is_empty() || lines.is_empty() {
+    if search.is_inactive() {
         return;
     }
     let visible_end = scroll + lines.len();
-    let lo = search.matches.partition_point(|m| m.row < scroll);
-    let hi = search.matches.partition_point(|m| m.row < visible_end);
+    let (lo, hi) = search.matches_range(scroll, visible_end);
     if lo == hi {
         return;
     }
     let mut by_row: HashMap<usize, Vec<(usize, usize, Style)>> = HashMap::new();
     for idx in lo..hi {
-        let m = &search.matches[idx];
-        let style = if Some(idx) == search.current {
+        let m = search.r#match(idx);
+        let style = if Some(idx) == search.current() {
             CURRENT_MATCH_STYLE
         } else {
             MATCH_STYLE
@@ -478,15 +467,15 @@ fn style_at(line: &Line<'static>, offset: usize) -> Style {
 
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let (label, total, view) = if app.selected == 0 {
-        ("all", app.rendered.len(), &app.log_view_state.main)
+        ("all", app.rendered.len(), app.log_view_state.main_view())
     } else {
-        let cat = &app.log_view_state.categories[app.selected - 1];
-        (cat.name.as_str(), cat.indices.len(), &cat.view)
+        let cat = &app.log_view_state.get_category(app.selected - 1);
+        (cat.name(), cat.indices_count(), cat.view())
     };
     let mut s = format!(
         " {label}: {total} lines {}",
-        if view.display_follow {
-            if view.follow {
+        if view.display_follow() {
+            if view.is_following() {
                 "· FOLLOW "
             } else {
                 "· PAUSED "
@@ -496,14 +485,14 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         }
     );
     let search = app.active_search();
-    if let Some(q) = &search.query {
-        let total = search.matches.len();
-        let pos = match search.current {
+    if let Some(q) = &search.query() {
+        let total = search.matches_count();
+        let pos = match search.current() {
             Some(i) if total > 0 => i + 1,
             _ => 0,
         };
-        let prefix = if q.is_regex { "re/" } else { "/" };
-        s.push_str(&format!("· {prefix}{} {pos}/{total} ", q.raw));
+        let prefix = if q.is_regex() { "re/" } else { "/" };
+        s.push_str(&format!("· {prefix}{} {pos}/{total} ", q.raw_query()));
     }
     s.push_str("· q quit · / search · : goto · n/N next/prev · hjkl/↑↓ PgUp/PgDn scroll · g/G top/bottom · End follow · Tab/0-9 panes · c promote search · Ctrl-X hide ");
     f.render_widget(
@@ -1071,8 +1060,8 @@ mod tests {
     fn draw_renders_promoted_category_tab_label() {
         let mut app = App::new(None, true);
         push_lines(&mut app, &["[db] a", "[db] b", "[db] c"]);
-        assert_eq!(app.log_view_state.categories.len(), 1);
-        let name = app.log_view_state.get_category(0).name.clone();
+        assert_eq!(app.log_view_state.category_count(), 1);
+        let name = app.log_view_state.get_category(0).name().to_owned();
         let buf = render(&mut app, &InputMode::Normal, 80, 10);
         let text = buffer_text(&buf);
         assert!(
@@ -1085,7 +1074,7 @@ mod tests {
     fn draw_category_pane_uses_category_name_in_title() {
         let mut app = App::new(None, true);
         push_lines(&mut app, &["[db] a", "[db] b", "[db] c"]);
-        let name = app.log_view_state.get_category(0).name.clone();
+        let name = app.log_view_state.get_category(0).name().to_owned();
         app.selected = 1;
         let buf = render(&mut app, &InputMode::Normal, 80, 10);
         let text = buffer_text(&buf);
@@ -1151,7 +1140,7 @@ mod tests {
     fn draw_follow_status_shows_paused_when_not_following() {
         let mut app = App::new(None, true);
         push_lines(&mut app, &["x"]);
-        app.log_view_state.main.follow = false;
+        app.log_view_state.main_view_mut().scroll_top(); // disable follow
         let buf = render(&mut app, &InputMode::Normal, 80, 10);
         let text = buffer_text(&buf);
         assert!(text.contains("PAUSED"), "PAUSED indicator missing\n{text}");

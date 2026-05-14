@@ -17,16 +17,16 @@ const BURST_WINDOW: usize = 6;
 const PENDING_EVICTION_AGE: usize = 200;
 
 pub struct ViewState {
-    pub scroll: usize,
+    scroll: usize,
     /// Horizontal column offset of the body relative to its rendered column 0.
     /// Clamped at draw time to the longest visible line's width so the user
     /// can't scroll past the content.
-    pub hscroll: usize,
+    hscroll: usize,
     /// Defines whether the view should stick to the bottom of the buffer or move freely. On init,
     /// `false` will display the top of the buffer, `true` the bottom.
-    pub follow: bool,
+    follow: bool,
     /// When displaying a file without the `follow` option, hide the FOLLOW/PAUSE text.
-    pub display_follow: bool,
+    display_follow: bool,
 }
 
 impl ViewState {
@@ -37,6 +37,37 @@ impl ViewState {
             follow: display_follow,
             display_follow,
         }
+    }
+
+    pub fn display_follow(&self) -> bool {
+        self.display_follow
+    }
+
+    pub fn is_following(&self) -> bool {
+        self.follow
+    }
+
+    pub fn follow_or_clamp(&mut self, max_scroll: usize) -> usize {
+        if self.follow {
+            self.scroll = max_scroll;
+        } else {
+            self.scroll = self.scroll.min(max_scroll);
+        }
+        self.scroll
+    }
+
+    pub fn scroll_to_row(&mut self, row: usize) {
+        self.scroll = row;
+        self.follow = false;
+    }
+
+    pub fn scroll_top(&mut self) {
+        self.follow = false;
+        self.scroll = 0;
+    }
+
+    pub fn scroll_bottom(&mut self) {
+        self.follow = true;
     }
 
     pub fn scroll_up(&mut self, n: usize) {
@@ -59,27 +90,81 @@ impl ViewState {
     pub fn scroll_right(&mut self, n: usize) {
         self.hscroll = self.hscroll.saturating_add(n);
     }
+
+    pub fn clamp_hscroll(&mut self, max_hscroll: usize) -> usize {
+        self.hscroll = self.hscroll.min(max_hscroll);
+        self.hscroll
+    }
 }
 
 pub struct Category {
-    pub name: String,
+    name: String,
     /// Strictly increasing row indices into `App::rendered`.
-    pub indices: Vec<usize>,
-    pub view: ViewState,
-    pub search: SearchState,
+    indices: Vec<usize>,
+    view: ViewState,
+    search: SearchState,
     /// When `Some`, every newly-pushed row whose text matches this regex is
     /// appended to `indices`. Set only when the user explicitly promotes a
     /// search term to a category from the search bar; tag-extracted
     /// categories leave this as `None` and rely on `categorize::extract`.
-    pub match_regex: Option<Regex>,
+    match_regex: Option<Regex>,
+}
+
+impl Category {
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    pub fn indices_count(&self) -> usize {
+        self.indices.len()
+    }
+
+    pub fn last_index(&self) -> Option<&usize> {
+        self.indices.last()
+    }
+
+    /// Returns the index at `idx`.
+    ///
+    /// # Panics
+    ///
+    /// May panic if `idx` is out of bounds.
+    pub fn index(&self, idx: usize) -> usize {
+        self.indices[idx]
+    }
+
+    pub fn indices(&self) -> &[usize] {
+        &self.indices
+    }
+
+    pub fn view(&self) -> &ViewState {
+        &self.view
+    }
+
+    pub fn view_mut(&mut self) -> &mut ViewState {
+        &mut self.view
+    }
+
+    pub fn match_regex(&self) -> Option<&Regex> {
+        self.match_regex.as_ref()
+    }
 }
 
 /// Compiled query backing a `SearchState`. Literal queries are stored after
 /// `regex::escape` so the matcher path is single-source.
 pub struct CompiledQuery {
-    pub regex: Regex,
-    pub raw: String,
-    pub is_regex: bool,
+    regex: Regex,
+    raw: String,
+    is_regex: bool,
+}
+
+impl CompiledQuery {
+    pub fn raw_query(&self) -> &str {
+        &self.raw
+    }
+
+    pub fn is_regex(&self) -> bool {
+        self.is_regex
+    }
 }
 
 /// One match within a single rendered row. `start`/`end` are byte offsets
@@ -95,9 +180,72 @@ pub struct RowMatch {
 /// next/prev navigation is a simple index walk.
 #[derive(Default)]
 pub struct SearchState {
-    pub query: Option<CompiledQuery>,
-    pub matches: Vec<RowMatch>,
-    pub current: Option<usize>,
+    query: Option<CompiledQuery>,
+    matches: Vec<RowMatch>,
+    current: Option<usize>,
+}
+
+impl SearchState {
+    pub fn is_inactive(&self) -> bool {
+        self.query.is_none() || self.matches.is_empty() || self.current.is_none()
+    }
+
+    pub fn query(&self) -> Option<&CompiledQuery> {
+        self.query.as_ref()
+    }
+
+    pub fn current(&self) -> Option<usize> {
+        self.current
+    }
+
+    pub fn current_match_row(&self) -> Option<usize> {
+        self.current
+            .and_then(|c| self.matches.get(c))
+            .map(|m| m.row)
+    }
+
+    pub fn search_next(&mut self) -> Option<usize> {
+        if self.matches.is_empty() {
+            return None;
+        }
+        let next = match self.current {
+            Some(i) => (i + 1) % self.matches.len(),
+            None => 0,
+        };
+        self.current = Some(next);
+        Some(self.matches[next].row)
+    }
+
+    pub fn search_prev(&mut self) -> Option<usize> {
+        if self.matches.is_empty() {
+            return None;
+        }
+        let prev = match self.current {
+            Some(i) => (i + self.matches.len() - 1) % self.matches.len(),
+            None => self.matches.len() - 1,
+        };
+        self.current = Some(prev);
+        Some(self.matches[prev].row)
+    }
+
+    /// Returns the match at `idx`.
+    ///
+    /// # Panics
+    ///
+    /// May panic if `idx` is out of bounds.
+    pub fn r#match(&self, idx: usize) -> &RowMatch {
+        &self.matches[idx]
+    }
+
+    pub fn matches_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    pub fn matches_range(&self, scroll: usize, visible_end: usize) -> (usize, usize) {
+        let lo = self.matches.partition_point(|m| m.row < scroll);
+        let hi = self.matches.partition_point(|m| m.row < visible_end);
+        (lo, hi)
+    }
 }
 
 struct PendingCategory {
@@ -118,14 +266,14 @@ pub struct LogViewState {
     /// `VecDeque` rather than `Vec` so the front-trim at `max_lines`
     /// capacity is O(1) (head-pointer advance) instead of an O(N)
     /// memmove of the entire buffer on every overflowing push.
-    pub lines: VecDeque<String>,
+    lines: VecDeque<String>,
     /// Parallel to `lines`: each entry is the input line number of the
     /// row. Numbers come from `input_seq` and so survive trimming.
-    pub line_numbers: VecDeque<usize>,
-    pub main: ViewState,
-    pub main_search: SearchState,
-    pub max_lines: Option<usize>,
-    pub categories: Vec<Category>,
+    line_numbers: VecDeque<usize>,
+    main: ViewState,
+    main_search: SearchState,
+    max_lines: Option<usize>,
+    categories: Vec<Category>,
     category_index: HashMap<String, usize>,
     pending: HashMap<String, PendingCategory>,
     /// Category names the user has explicitly hidden. `push` skips these
@@ -423,6 +571,10 @@ impl LogViewState {
         Ok(Some(idx + 1))
     }
 
+    pub fn category_count(&self) -> usize {
+        self.categories.len()
+    }
+
     /// Returns the category with at index `idx`.
     ///
     /// # Panics
@@ -432,8 +584,40 @@ impl LogViewState {
         &self.categories[idx]
     }
 
+    /// Returns the mutable category with at index `idx`.
+    ///
+    /// # Panics
+    ///
+    /// May panic if the index is out of bounds.
+    pub fn get_category_mut(&mut self, idx: usize) -> &mut Category {
+        &mut self.categories[idx]
+    }
+
+    pub fn category_indices_and_names(&self) -> impl Iterator<Item = (usize, &str)> {
+        self.categories
+            .iter()
+            .enumerate()
+            .map(|(idx, c)| (idx, c.name.as_str()))
+    }
+
     pub fn line_numbers(&self) -> &VecDeque<usize> {
         &self.line_numbers
+    }
+
+    pub fn main_view(&self) -> &ViewState {
+        &self.main
+    }
+
+    pub fn main_view_mut(&mut self) -> &mut ViewState {
+        &mut self.main
+    }
+
+    pub fn get_search(&self, selected: usize) -> &SearchState {
+        if selected == 0 {
+            &self.main_search
+        } else {
+            &self.get_category(selected - 1).search
+        }
     }
 }
 
