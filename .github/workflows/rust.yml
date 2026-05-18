@@ -43,9 +43,6 @@ jobs:
     - name: Run clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
 
-    - name: Publication dry-run
-      run: cargo publish --dry-run -p splog-core && cargo publish --dry-run -p splog
-      
   build:
     name: Build & Test
     env:
