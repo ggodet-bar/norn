@@ -30,6 +30,8 @@ pub fn extract(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = HashSet::<String>::new();
 
+    // SAFETY: all occurrences of `cap` will match a group, `.get(0)` and `.get(1)` will always
+    // a result.
     for re in [bracketed_re(), parenthesized_re(), fqn_like_re()] {
         for cap in re.captures_iter(&plain) {
             if cap.get(0).unwrap().start() >= header_end {
@@ -133,6 +135,8 @@ fn header_end_and_dash_candidates(plain: &str) -> (usize, Vec<(String, usize, us
                 && let Some(cap) = dashed_re().captures(&plain[dash_idx..])
             {
                 let m = cap.get_match();
+                // SAFETY: `dashed_re` matches a group, so `cap.get(1)` is always expected to
+                // always return a result.
                 let cap = cap.get(1).unwrap();
                 let (start_idx, end_idx) = (cap.start() + dash_idx, cap.end() + dash_idx);
                 if m.start() == 0 {

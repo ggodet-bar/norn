@@ -330,6 +330,8 @@ impl LogViewState {
         entry.hits += 1;
         entry.rows.extend(start..end);
         entry.last_seen_seq = seq;
+        // SAFETY: BURST_HITS > 0 so entry.recent_seqs.len() > 0, so getting the first entry is
+        // should always work.
         let burst = entry.recent_seqs.len() == BURST_HITS
             && seq - entry.recent_seqs.front().copied().unwrap() < BURST_WINDOW;
         entry.hits >= PROMOTION_THRESHOLD || burst
@@ -448,6 +450,7 @@ impl LogViewState {
         if self.main_search.query.is_none() || start == end {
             return;
         }
+        // SAFETY the guard condition at the top of the method garantees that `query.is_some()`.
         let q = self.main_search.query.as_ref().unwrap();
         let mut new_matches = Vec::new();
         for pane_row in start..end {
